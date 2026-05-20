@@ -25,16 +25,16 @@ except Exception as e:
 
 CONFIDENCE_THRESHOLD = 0.5 
 
-# ---- GIỚI HẠN FPS ----
-TARGET_FPS = 6  # 6 khung hình/giây giúp Pi chạy siêu nhẹ mà vẫn đếm tốt
+# Độ phân giải thấp giúp Pi chạy nhanh hơn gấp 4 lần
+FRAME_WIDTH = 320
+FRAME_HEIGHT = 240
+TARGET_FPS = 8  # Có thể tăng lên 8-10 vì độ phân giải đã giảm
 
 # =====================================================================
-# 2. CẤU HÌNH VẠCH CHÉO VÀ BIẾN ĐẾM
+# 2. CẤU HÌNH 1 VẠCH DỌC VÀ BIẾN ĐẾM
 # =====================================================================
-L1_PT1 = (313, 204)
-L1_PT2 = (524, 4)
-L2_PT1 = (201, 481)
-L2_PT2 = (575, -2)
+# Vạch dọc nằm ở chính giữa khung hình (X = 160)
+LINE_X = int(FRAME_WIDTH / 2)
 
 TOTAL_IN = 0
 TOTAL_OUT = 0
@@ -44,46 +44,36 @@ MAX_DISAPPEARED = 30
 
 trackable_objects = {}
 next_object_id = 0
-WINDOW_NAME = "He thong dem nguoi AI (MobileNet-SSD)"
+WINDOW_NAME = "Dem nguoi AI (Ban Sieu Nhe)"
 
 # =====================================================================
-# 3. HÀM BẮT SỰ KIỆN CHUỘT (ĐIỀU CHỈNH SỐ LƯỢNG)
+# 3. HÀM BẮT SỰ KIỆN CHUỘT (Tọa độ đã thu nhỏ cho 320x240)
 # =====================================================================
 def adjust_counters(event, x, y, flags, param):
     global TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM
     if event == cv2.EVENT_LBUTTONDOWN:
-        if 400 <= y <= 420:
-            if 120 <= x <= 150: TOTAL_IN = max(0, TOTAL_IN - 1)
-            elif 160 <= x <= 190: TOTAL_IN += 1
-        elif 430 <= y <= 450:
-            if 120 <= x <= 150: TOTAL_OUT = max(0, TOTAL_OUT - 1)
-            elif 160 <= x <= 190: TOTAL_OUT += 1
-        elif 460 <= y <= 480:
-            if 120 <= x <= 150: PEOPLE_IN_ROOM = max(0, PEOPLE_IN_ROOM - 1)
-            elif 160 <= x <= 190: PEOPLE_IN_ROOM += 1
+        if 190 <= y <= 202: # Hàng VÀO
+            if 70 <= x <= 85: TOTAL_IN = max(0, TOTAL_IN - 1)
+            elif 95 <= x <= 110: TOTAL_IN += 1
+        elif 205 <= y <= 217: # Hàng RA
+            if 70 <= x <= 85: TOTAL_OUT = max(0, TOTAL_OUT - 1)
+            elif 95 <= x <= 110: TOTAL_OUT += 1
+        elif 220 <= y <= 232: # Hàng TRONG
+            if 70 <= x <= 85: PEOPLE_IN_ROOM = max(0, PEOPLE_IN_ROOM - 1)
+            elif 95 <= x <= 110: PEOPLE_IN_ROOM += 1
 
 # =====================================================================
-# 4. HÀM TOÁN HỌC XÁC ĐỊNH VÙNG
+# 4. HÀM XÁC ĐỊNH VỊ TRÍ (Đơn giản hóa tuyệt đối)
 # =====================================================================
-def get_position(cx, cy, pt1, pt2):
-    cross_product = (pt2[0] - pt1[0]) * (cy - pt1[1]) - (pt2[1] - pt1[1]) * (cx - pt1[0])
-    return "BELOW" if cross_product > 0 else "ABOVE"
-
-def get_zone(cx, cy):
-    min_x = min(L1_PT1[0], L1_PT2[0], L2_PT1[0], L2_PT2[0]) - 20
-    max_x = max(L1_PT1[0], L1_PT2[0], L2_PT1[0], L2_PT2[0]) + 20
-    
-    if cx < min_x or cx > max_x: return "IGNORE"
-
-    pos_line1 = get_position(cx, cy, L1_PT1, L1_PT2)
-    pos_line2 = get_position(cx, cy, L2_PT1, L2_PT2)
-
-    if pos_line1 == "ABOVE": return "OUTSIDE"
-    elif pos_line2 == "BELOW": return "INSIDE"
-    else: return "MIDDLE"
+def get_zone(cx):
+    # Nhỏ hơn vạch là Trái, lớn hơn là Phải
+    if cx < LINE_X:
+        return "LEFT"
+    else:
+        return "RIGHT"
 
 # =====================================================================
-# 5. KHỞI TẠO CAMERA (HỖ TRỢ LIBCAMERIFY)
+# 5. KHỞI TẠO CAMERA (HỖ TRỢ LIBCAMERIFY, Ép độ phân giải)
 # =====================================================================
 class FrameGrabber:
     def __init__(self, src=0):
@@ -91,10 +81,12 @@ class FrameGrabber:
         self.stopped = False
         self.frame = None
         self.lock = threading.Lock()
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.cap.set(cv2.CAP_PROP_FPS, 30) # Luồng đọc ảnh phần cứng vẫn để 30fps cho mượt
+        
+        # Ép phần cứng camera chạy ở độ phân giải siêu nhẹ
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+        self.cap.set(cv2.CAP_PROP_FPS, 30) 
+        
         threading.Thread(target=self._reader, daemon=True).start()
 
     def isOpened(self): return self.cap.isOpened()
@@ -119,13 +111,13 @@ class FrameGrabber:
 
 vs = FrameGrabber(0)
 if not vs.isOpened():
-    print("[ERROR] Không thể kết nối camera. Hãy kiểm tra lại lệnh libcamerify.")
+    print("[ERROR] Không thể kết nối camera. Nhớ dùng lệnh libcamerify.")
     sys.exit(1)
 
 cv2.namedWindow(WINDOW_NAME)
 cv2.setMouseCallback(WINDOW_NAME, adjust_counters)
 
-print(f"[INFO] Hệ thống đếm người AI bắt đầu chạy (Giới hạn: {TARGET_FPS} FPS)...")
+print(f"[INFO] Hệ thống chạy ở chế độ Siêu Nhẹ ({FRAME_WIDTH}x{FRAME_HEIGHT} @ {TARGET_FPS} FPS)...")
 
 # =====================================================================
 # VÒNG LẶP XỬ LÝ CHÍNH
@@ -138,10 +130,10 @@ while True:
         time.sleep(0.01)
         continue
 
-    # --- BỘ LỌC GIỚI HẠN FPS XỬ LÝ AI ---
+    # --- BỘ LỌC FPS ---
     current_time = time.time()
     if (current_time - prev_time) < (1.0 / TARGET_FPS):
-        time.sleep(0.005) # Ngủ 5ms nhả CPU
+        time.sleep(0.005)
         continue
     
     prev_time = current_time 
@@ -159,7 +151,6 @@ while True:
 
         if confidence > CONFIDENCE_THRESHOLD:
             idx = int(detections[0, 0, i, 1])
-            
             if CLASSES[idx] != "person":
                 continue
 
@@ -170,14 +161,14 @@ while True:
             cY = int((startY + endY) / 2.0)
             current_centroids.append((cX, cY, startX, startY, endX, endY))
 
-    # --- LOGIC TRACKING TỐI ƯU CHO FPS THẤP ---
+    # --- LOGIC TRACKING (1 Vạch) ---
     updated_trackable_objects = dict(trackable_objects)
     seen_ids = set()
 
     for (cX, cY, startX, startY, endX, endY) in current_centroids:
         matched_id = None
-        # ĐÃ TĂNG lên 180 để người đi bộ nhanh không bị rớt ID do tụt FPS
-        min_distance = 180  
+        # Giảm khoảng cách dò ID xuống 80 vì khung hình đã thu nhỏ một nửa
+        min_distance = 80  
 
         for obj_id, (old_cX, old_cY, zone_history, disappeared) in trackable_objects.items():
             d = np.hypot(cX - old_cX, cY - old_cY)
@@ -188,43 +179,51 @@ while True:
         if matched_id is None:
             matched_id = next_object_id
             next_object_id += 1
-            zone_history = deque([get_zone(cX, cY)], maxlen=10) 
+            zone_history = deque([get_zone(cX)], maxlen=10) 
             disappeared = 0
         else:
             old_cX, old_cY, zone_history, disappeared = trackable_objects[matched_id]
-            current_zone = get_zone(cX, cY)
+            current_zone = get_zone(cX)
             if len(zone_history) == 0 or zone_history[-1] != current_zone:
                 zone_history.append(current_zone)
             disappeared = 0
 
-        compressed = [z for z in zone_history if z != "IGNORE"]
+        # Nén lịch sử
         final_compressed = []
-        for z in compressed:
+        for z in zone_history:
             if not final_compressed or final_compressed[-1] != z:
                 final_compressed.append(z)
 
-        if "OUTSIDE" in final_compressed and "INSIDE" in final_compressed:
-            idx_out = final_compressed.index("OUTSIDE")
-            idx_in = final_compressed.index("INSIDE")
+        # Xử lý đếm qua vạch dọc
+        if "LEFT" in final_compressed and "RIGHT" in final_compressed:
+            idx_left = final_compressed.index("LEFT")
+            idx_right = final_compressed.index("RIGHT")
             
-            if idx_out < idx_in:
+            # Khách đi VÀO (Trái -> Phải)
+            if idx_left < idx_right:
                 TOTAL_IN += 1
                 PEOPLE_IN_ROOM += 1
-                zone_history = deque(["INSIDE"], maxlen=10)
-            elif idx_in < idx_out:
+                zone_history = deque(["RIGHT"], maxlen=10)
+                
+            # Khách đi RA (Phải -> Trái)
+            elif idx_right < idx_left:
                 TOTAL_OUT += 1
                 PEOPLE_IN_ROOM = max(0, PEOPLE_IN_ROOM - 1) 
-                zone_history = deque(["OUTSIDE"], maxlen=10)
+                zone_history = deque(["LEFT"], maxlen=10)
 
         updated_trackable_objects[matched_id] = (cX, cY, zone_history, disappeared)
         seen_ids.add(matched_id)
 
+        # Vẽ Khung vuông AI
         cv2.rectangle(frame, (startX, startY), (endX, endY), (255, 150, 0), 2)
-        cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
-        current_zone_str = get_zone(cX, cY)
-        text = f"ID {matched_id} | {current_zone_str} | {confidence*100:.0f}%"
-        cv2.putText(frame, text, (startX, startY - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 150, 0), 2)
+        cv2.circle(frame, (cX, cY), 4, (0, 0, 255), -1)
+        
+        # Chữ ID trên đầu đã được làm nhỏ lại cho vừa vặn
+        current_zone_str = get_zone(cX)
+        text = f"ID:{matched_id} | {current_zone_str}"
+        cv2.putText(frame, text, (startX, startY - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 150, 0), 1)
 
+    # Dọn rác
     for obj_id in list(updated_trackable_objects.keys()):
         if obj_id not in seen_ids:
             cX, cY, zone_history, disappeared = updated_trackable_objects[obj_id]
@@ -236,23 +235,31 @@ while True:
 
     trackable_objects = updated_trackable_objects
 
-    # --- VẼ GIAO DIỆN ---
-    cv2.line(frame, L1_PT1, L1_PT2, (0, 0, 255), 2)
-    cv2.line(frame, L2_PT1, L2_PT2, (0, 0, 255), 2)
+    # =================================================================
+    # 6. VẼ GIAO DIỆN (Đã thu nhỏ cho 320x240)
+    # =================================================================
+    # Vẽ Vạch Dọc
+    cv2.line(frame, (LINE_X, 0), (LINE_X, h), (0, 255, 255), 2)
     
-    cv2.putText(frame, "NGOAI", (w - 150, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-    cv2.putText(frame, "TRONG", (w - 150, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+    cv2.putText(frame, "RA (<--)", (LINE_X - 65, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+    cv2.putText(frame, "(-->) VAO", (LINE_X + 5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
 
-    cv2.rectangle(frame, (5, 385), (205, 485), (0, 0, 0), -1)
-    cv2.putText(frame, f"Vao: {TOTAL_IN}", (10, 415), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-    cv2.putText(frame, f"Ra: {TOTAL_OUT}", (10, 445), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-    cv2.putText(frame, f"Trong: {PEOPLE_IN_ROOM}", (10, 475), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    # Nền đen cho text
+    cv2.rectangle(frame, (0, 180), (120, 240), (0, 0, 0), -1)
 
-    for y_btn in [400, 430, 460]:
-        cv2.rectangle(frame, (120, y_btn), (150, y_btn + 20), (80, 80, 80), -1)
-        cv2.putText(frame, "-", (130, y_btn + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.rectangle(frame, (160, y_btn), (190, y_btn + 20), (80, 80, 80), -1)
-        cv2.putText(frame, "+", (168, y_btn + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    # Text hiển thị
+    cv2.putText(frame, f"Vao: {TOTAL_IN}", (5, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+    cv2.putText(frame, f"Ra: {TOTAL_OUT}", (5, 215), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+    cv2.putText(frame, f"Trg: {PEOPLE_IN_ROOM}", (5, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+    # Vẽ nút bấm đã thu nhỏ
+    for y_btn in [190, 205, 220]:
+        # Nút [-]
+        cv2.rectangle(frame, (70, y_btn), (85, y_btn + 12), (80, 80, 80), -1)
+        cv2.putText(frame, "-", (73, y_btn + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        # Nút [+]
+        cv2.rectangle(frame, (95, y_btn), (110, y_btn + 12), (80, 80, 80), -1)
+        cv2.putText(frame, "+", (98, y_btn + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
     cv2.imshow(WINDOW_NAME, frame)
     
