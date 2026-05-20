@@ -6,15 +6,13 @@ import time
 from collections import deque
 
 # =====================================================================
-# 1. CẤU HÌNH AI (MOBILENET-SSD)
+# 1. CẤU HÌNH AI (MOBILENET-SSD) VÀ HIỆU NĂNG
 # =====================================================================
-# Khai báo các class mà MobileNet-SSD có thể nhận diện (Ta chỉ lấy "person")
 CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
            "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
            "dog", "horse", "motorbike", "person", "pottedplant", "sheep",
            "sofa", "train", "tvmonitor"]
 
-# Tên file mô hình (Phải để cùng thư mục với file code này)
 PROTOTXT = "MobileNetSSD_deploy.prototxt"
 MODEL = "MobileNetSSD_deploy.caffemodel"
 
@@ -25,16 +23,18 @@ except Exception as e:
     print("[ERROR] Không tìm thấy file mô hình! Vui lòng tải file .prototxt và .caffemodel")
     sys.exit(1)
 
-# Độ tin cậy tối thiểu để xác nhận đó là một người (0.5 = 50%)
 CONFIDENCE_THRESHOLD = 0.5 
+
+# ---- GIỚI HẠN FPS ----
+TARGET_FPS = 6  # 6 khung hình/giây giúp Pi chạy siêu nhẹ mà vẫn đếm tốt
 
 # =====================================================================
 # 2. CẤU HÌNH VẠCH CHÉO VÀ BIẾN ĐẾM
 # =====================================================================
-L1_PT1 = (261, 137)
-L1_PT2 = (481, 19)
-L2_PT1 = (308, 357)
-L2_PT2 = (546, 133)
+L1_PT1 = (313, 204)
+L1_PT2 = (524, 4)
+L2_PT1 = (201, 481)
+L2_PT2 = (575, -2)
 
 TOTAL_IN = 0
 TOTAL_OUT = 0
@@ -44,7 +44,7 @@ MAX_DISAPPEARED = 30
 
 trackable_objects = {}
 next_object_id = 0
-WINDOW_NAME = "He thong dem nguoi (MobileNet-SSD)"
+WINDOW_NAME = "He thong dem nguoi AI (MobileNet-SSD)"
 
 # =====================================================================
 # 3. HÀM BẮT SỰ KIỆN CHUỘT (ĐIỀU CHỈNH SỐ LƯỢNG)
@@ -83,7 +83,7 @@ def get_zone(cx, cy):
     else: return "MIDDLE"
 
 # =====================================================================
-# 5. KHỞI TẠO CAMERA
+# 5. KHỞI TẠO CAMERA (HỖ TRỢ LIBCAMERIFY)
 # =====================================================================
 class FrameGrabber:
     def __init__(self, src=0):
@@ -94,7 +94,7 @@ class FrameGrabber:
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.cap.set(cv2.CAP_PROP_FPS, 15)
+        self.cap.set(cv2.CAP_PROP_FPS, 30) # Luồng đọc ảnh phần cứng vẫn để 30fps cho mượt
         threading.Thread(target=self._reader, daemon=True).start()
 
     def isOpened(self): return self.cap.isOpened()
@@ -119,60 +119,65 @@ class FrameGrabber:
 
 vs = FrameGrabber(0)
 if not vs.isOpened():
-    print("[ERROR] Không thể kết nối camera.")
+    print("[ERROR] Không thể kết nối camera. Hãy kiểm tra lại lệnh libcamerify.")
     sys.exit(1)
 
 cv2.namedWindow(WINDOW_NAME)
 cv2.setMouseCallback(WINDOW_NAME, adjust_counters)
 
-print("[INFO] Hệ thống đếm người AI bắt đầu chạy...")
+print(f"[INFO] Hệ thống đếm người AI bắt đầu chạy (Giới hạn: {TARGET_FPS} FPS)...")
 
 # =====================================================================
 # VÒNG LẶP XỬ LÝ CHÍNH
 # =====================================================================
+prev_time = 0
+
 while True:
     frame = vs.read()
     if frame is None:
         time.sleep(0.01)
         continue
 
+    # --- BỘ LỌC GIỚI HẠN FPS XỬ LÝ AI ---
+    current_time = time.time()
+    if (current_time - prev_time) < (1.0 / TARGET_FPS):
+        time.sleep(0.005) # Ngủ 5ms nhả CPU
+        continue
+    
+    prev_time = current_time 
+
     (h, w) = frame.shape[:2]
     current_centroids = []
 
     # --- CHẠY AI MOBILENET-SSD ---
-    # Chuyển ảnh thành blob (định dạng AI hiểu) và resize về 300x300
     blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5)
     net.setInput(blob)
     detections = net.forward()
 
-    # Quét qua các kết quả nhận diện được
     for i in np.arange(0, detections.shape[2]):
         confidence = detections[0, 0, i, 2]
 
-        # Lọc bỏ những kết quả độ tin cậy thấp
         if confidence > CONFIDENCE_THRESHOLD:
             idx = int(detections[0, 0, i, 1])
             
-            # Chỉ quan tâm nếu vật thể là "person" (người)
             if CLASSES[idx] != "person":
                 continue
 
-            # Tính toán lại tọa độ khung bounding box cho ảnh gốc 640x480
             box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
             (startX, startY, endX, endY) = box.astype("int")
 
-            # Tính tọa độ tâm của người đó
             cX = int((startX + endX) / 2.0)
             cY = int((startY + endY) / 2.0)
             current_centroids.append((cX, cY, startX, startY, endX, endY))
 
-    # --- LOGIC TRACKING (Giữ nguyên) ---
+    # --- LOGIC TRACKING TỐI ƯU CHO FPS THẤP ---
     updated_trackable_objects = dict(trackable_objects)
     seen_ids = set()
 
     for (cX, cY, startX, startY, endX, endY) in current_centroids:
         matched_id = None
-        min_distance = 100  
+        # ĐÃ TĂNG lên 180 để người đi bộ nhanh không bị rớt ID do tụt FPS
+        min_distance = 180  
 
         for obj_id, (old_cX, old_cY, zone_history, disappeared) in trackable_objects.items():
             d = np.hypot(cX - old_cX, cY - old_cY)
@@ -214,7 +219,6 @@ while True:
         updated_trackable_objects[matched_id] = (cX, cY, zone_history, disappeared)
         seen_ids.add(matched_id)
 
-        # Vẽ bounding box và ID
         cv2.rectangle(frame, (startX, startY), (endX, endY), (255, 150, 0), 2)
         cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
         current_zone_str = get_zone(cX, cY)
