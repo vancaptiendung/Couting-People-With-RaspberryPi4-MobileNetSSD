@@ -62,16 +62,17 @@ def adjust_counters(event, x, y, flags, param):
             elif 95 <= x <= 110: PEOPLE_IN_ROOM += 1
 
 # =====================================================================
-# 4. HÀM XÁC ĐỊNH VỊ TRÍ 
+# 4. HÀM XÁC ĐỊNH VỊ TRÍ (ĐÃ ĐẢO NGƯỢC)
 # =====================================================================
 def get_zone(cx):
+    # TRÁI LÀ TRONG, PHẢI LÀ NGOÀI
     if cx < LINE_X:
-        return "LEFT"
+        return "INSIDE"  # Bên trái vạch
     else:
-        return "RIGHT"
+        return "OUTSIDE" # Bên phải vạch
 
 # =====================================================================
-# 5. KHỞI TẠO CAMERA (Đã sửa lỗi sọc hình)
+# 5. KHỞI TẠO CAMERA 
 # =====================================================================
 class FrameGrabber:
     def __init__(self, src=0):
@@ -136,8 +137,7 @@ while True:
     
     prev_time = current_time 
 
-    # --- ÉP ĐỘ PHÂN GIẢI BẰNG PHẦN MỀM ĐỂ LÀM NHẸ PI ---
-    # Ảnh gốc 640x480 đẹp, sạch sẽ được bóp lại thành 320x240 ở đây
+    # --- ÉP ĐỘ PHÂN GIẢI BẰNG PHẦN MỀM LÀM NHẸ PI ---
     frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
 
     (h, w) = frame.shape[:2]
@@ -163,7 +163,7 @@ while True:
             cY = int((startY + endY) / 2.0)
             current_centroids.append((cX, cY, startX, startY, endX, endY))
 
-    # --- LOGIC TRACKING (1 Vạch) ---
+    # --- LOGIC TRACKING (ĐÃ THEO HƯỚNG MỚI) ---
     updated_trackable_objects = dict(trackable_objects)
     seen_ids = set()
 
@@ -194,19 +194,21 @@ while True:
             if not final_compressed or final_compressed[-1] != z:
                 final_compressed.append(z)
 
-        if "LEFT" in final_compressed and "RIGHT" in final_compressed:
-            idx_left = final_compressed.index("LEFT")
-            idx_right = final_compressed.index("RIGHT")
+        if "OUTSIDE" in final_compressed and "INSIDE" in final_compressed:
+            idx_out = final_compressed.index("OUTSIDE")
+            idx_in = final_compressed.index("INSIDE")
             
-            if idx_left < idx_right:
+            # Khách đi VÀO (Từ NGOÀI/Phải vào TRONG/Trái)
+            if idx_out < idx_in:
                 TOTAL_IN += 1
                 PEOPLE_IN_ROOM += 1
-                zone_history = deque(["RIGHT"], maxlen=10)
+                zone_history = deque(["INSIDE"], maxlen=10)
                 
-            elif idx_right < idx_left:
+            # Khách đi RA (Từ TRONG/Trái ra NGOÀI/Phải)
+            elif idx_in < idx_out:
                 TOTAL_OUT += 1
                 PEOPLE_IN_ROOM = max(0, PEOPLE_IN_ROOM - 1) 
-                zone_history = deque(["LEFT"], maxlen=10)
+                zone_history = deque(["OUTSIDE"], maxlen=10)
 
         updated_trackable_objects[matched_id] = (cX, cY, zone_history, disappeared)
         seen_ids.add(matched_id)
@@ -230,12 +232,13 @@ while True:
     trackable_objects = updated_trackable_objects
 
     # =================================================================
-    # 6. VẼ GIAO DIỆN 
+    # 6. VẼ GIAO DIỆN HƯỚNG MỚI
     # =================================================================
     cv2.line(frame, (LINE_X, 0), (LINE_X, h), (0, 255, 255), 2)
     
-    cv2.putText(frame, "RA (<--)", (LINE_X - 65, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
-    cv2.putText(frame, "(-->) VAO", (LINE_X + 5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+    # Text hướng dẫn (Trái là TRONG/Đi vào, Phải là NGOÀI/Đi ra)
+    cv2.putText(frame, "TRONG (<-- Vao)", (LINE_X - 110, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+    cv2.putText(frame, "(Ra -->) NGOAI", (LINE_X + 10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
 
     cv2.rectangle(frame, (0, 180), (120, 240), (0, 0, 0), -1)
 
