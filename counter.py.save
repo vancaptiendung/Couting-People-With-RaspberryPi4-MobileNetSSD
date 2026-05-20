@@ -1,0 +1,79 @@
+import os
+import sys
+import cv2
+
+# Tạo chuỗi GStreamer kết nối trực tiếp đến hệ thống Libcamera của Pi 4
+pipeline = (
+    "libcamerasrc ! "
+    "video/x-raw, width=640, height=480, framerate=30/1 ! "
+    "autovideoconvert ! "
+    "video/x-raw, format=BGR ! "
+    "appsink drop=true max-buffers=1 emit-signals=true"
+)
+
+print("[INFO] Đang kết nối tới Camera Module qua Libcamera...")
+camera = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+
+if not camera.isOpened():
+    print("[FATAL] Không thể kết nối với Camera Module!")
+    print("Vui lòng kiểm tra lại xem cáp dẹt đã cắm chặt và đúng chiều chưa.")
+    sys.exit()
+
+print("[INFO] Kết nối camera thành công!")
+
+# Cấu hình độ phân giải phù hợp với MobileNet-SSD (Mô hình này hoạt động tốt ở độ phân giải thấp)
+#camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+#camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+while True:
+    ret, frame = camera.read()
+    if not ret or frame is None:
+        print("[LỖI] Camera không trả về hình ảnh! Khung hình bị rỗng. Dừng chương trình.")
+        break
+
+    # Resize ảnh về 300x300 để phù hợp với chuẩn đầu vào của MobileNet-SSD
+    (h, w) = frame.shape[:2]
+    blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5)
+
+    # Đưa ảnh vào mô hình để dự đoán
+    net.setInput(blob)
+    detections = net.forward()
+
+    object_count = 0 # Biến đếm số lượng vật thể mục tiêu
+
+    # Duyệt qua các kết quả trả về
+    for i in np.arange(0, detections.shape[2]):
+        confidence = detections[0, 0, i, 2]
+
+        # Lọc bỏ các vật thể có độ tự tin thấp
+        if confidence > CONFIDENCE_THRESHOLD:
+            idx = int(detections[0, 0, i, 1])
+            
+            # VÍ DỤ: Chỉ đếm "person" (người). Nếu muốn đếm tất cả, bỏ điều kiện if này.
+            if CLASSES[idx] == "person": 
+                object_count += 1
+
+                # Tính toán tọa độ khung bounding box
+                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                (startX, startY, endX, endY) = box.astype("int")
+
+                # Vẽ khung và nhãn lên vật thể
+                label = f"{CLASSES[idx]}: {confidence * 100:.2f}%"
+                cv2.rectangle(frame, (startX, startY), (endX, endY), (0, 255, 0), 2)
+                y = startY - 15 if startY - 15 > 15 else startY + 15
+                cv2.putText(frame, label, (startX, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    # Hiển thị tổng số lượng đếm được lên góc màn hình
+    cv2.putText(frame, f"Count: {object_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+
+    # Hiển thị frame kết quả
+    cv2.imshow("Raspberry Pi Object Counter", frame)
+    
+    # Nhấn phím 'q' để thoát
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord("q"):
+        break
+
+# Dọn dẹp bộ nhớ
+camera.release()
+cv2.destroyAllWindows()
