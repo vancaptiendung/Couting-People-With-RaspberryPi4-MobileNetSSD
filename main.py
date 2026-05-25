@@ -6,6 +6,7 @@ import time
 import os
 import glob
 import json
+import queue
 from datetime import datetime
 from collections import deque
 
@@ -19,21 +20,19 @@ def load_data():
         try:
             with open(DATA_FILE, "r") as f:
                 data = json.load(f)
-                print(f"[INFO] Đã khôi phục dữ liệu cũ: {data}")
+                print(f"[INFO] Đã khôi phục số liệu cũ: {data}")
                 return data.get("in", 0), data.get("out", 0), data.get("room", 0)
-        except:
-            print("[WARN] Lỗi đọc file data, đặt lại bằng 0.")
+        except: pass
     return 0, 0, 0
 
 def save_data(t_in, t_out, t_room):
     with open(DATA_FILE, "w") as f:
         json.dump({"in": t_in, "out": t_out, "room": t_room}, f)
 
-# Khôi phục dữ liệu ngay khi khởi động
 TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM = load_data()
 
 # =====================================================================
-# 2. CẤU HÌNH AI & HIỆU NĂNG
+# 2. CẤU HÌNH AI & HIỆU NĂNG 
 # =====================================================================
 CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
            "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
@@ -43,31 +42,32 @@ CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
 PROTOTXT = "MobileNetSSD_deploy.prototxt"
 MODEL = "MobileNetSSD_deploy.caffemodel"
 
-print("[INFO] Đang tải mô hình AI MobileNet-SSD...")
 try:
     net = cv2.dnn.readNetFromCaffe(PROTOTXT, MODEL)
 except Exception as e:
-    print("[ERROR] Không tìm thấy file mô hình!")
+    print("[ERROR] Không tìm thấy file mô hình AI!")
     sys.exit(1)
 
 CONFIDENCE_THRESHOLD = 0.5 
+
+# Kích thước siêu nhẹ cho phần mềm và AI xử lý
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
-TARGET_FPS = 8  
+TARGET_FPS = 6  # KHÓA CỨNG MƯỢT MÀ 6 FPS
 
 # =====================================================================
-# 3. CẤU HÌNH VẠCH & GHI HÌNH
+# 3. CẤU HÌNH VẠCH, ĐẾM & GHI HÌNH XOAY VÒNG
 # =====================================================================
 LINE_X = int(FRAME_WIDTH / 2)
 is_dragging_line = False 
 MAX_DISAPPEARED = 30     
 trackable_objects = {}
 next_object_id = 0
-WINDOW_NAME = "CCTV AI - Pi Counter"
+WINDOW_NAME = "CCTV AI - Pi Cam V2.1 (Real Max FOV)"
 
 VIDEO_DIR = "videos"
 MAX_VIDEOS = 3
-CHUNK_DURATION = 30 * 60 
+CHUNK_DURATION = 30 * 60  
 recording_enabled = False
 video_writer = None
 chunk_start_time = 0
@@ -75,8 +75,6 @@ chunk_start_time = 0
 if not os.path.exists(VIDEO_DIR):
     os.makedirs(VIDEO_DIR)
 
-# --- Luồng ghi hình đa luồng (Chống lag) ---
-import queue
 class ThreadedVideoWriter:
     def __init__(self, filename, fourcc, fps, frame_size):
         self.writer = cv2.VideoWriter(filename, fourcc, fps, frame_size)
@@ -85,22 +83,16 @@ class ThreadedVideoWriter:
         threading.Thread(target=self._write, daemon=True).start()
 
     def write(self, frame):
-        if not self.q.full():
-            self.q.put(frame.copy())
+        if not self.q.full(): self.q.put(frame.copy())
             
     def _write(self):
         while not self.stopped:
-            if not self.q.empty():
-                frame = self.q.get()
-                self.writer.write(frame)
-            else:
-                time.sleep(0.01)
+            if not self.q.empty(): self.writer.write(self.q.get())
+            else: time.sleep(0.01) 
                 
     def release(self):
         self.stopped = True
-        while not self.q.empty():
-            frame = self.q.get()
-            self.writer.write(frame)
+        while not self.q.empty(): self.writer.write(self.q.get())
         self.writer.release()
 
 # =====================================================================
@@ -126,28 +118,18 @@ def adjust_counters(event, x, y, flags, param):
             if 70 <= x <= 85: PEOPLE_IN_ROOM = max(0, PEOPLE_IN_ROOM - 1); changed = True
             elif 95 <= x <= 110: PEOPLE_IN_ROOM += 1; changed = True
 
-        # Nếu bấm nút làm đổi số -> Cập nhật file JSON ngay
         if changed: save_data(TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM)
 
-        if abs(x - LINE_X) < 15:
-            is_dragging_line = True
-
+        if abs(x - LINE_X) < 15: is_dragging_line = True
     elif event == cv2.EVENT_MOUSEMOVE:
-        if is_dragging_line:
-            LINE_X = max(20, min(FRAME_WIDTH - 20, x))
-
+        if is_dragging_line: LINE_X = max(20, min(FRAME_WIDTH - 20, x))
     elif event == cv2.EVENT_LBUTTONUP:
         is_dragging_line = False
 
-# =====================================================================
-# 5. HÀM XÁC ĐỊNH VỊ TRÍ 
-# =====================================================================
-def get_zone(cx):
-    if cx < LINE_X: return "INSIDE"
-    else: return "OUTSIDE"
+def get_zone(cx): return "INSIDE" if cx < LINE_X else "OUTSIDE"
 
 # =====================================================================
-# 6. KHỞI TẠO CAMERA
+# 5. KHỞI TẠO CAMERA (GÓC RỘNG THẬT FOV & CHỐNG SILENT CROP)
 # =====================================================================
 class FrameGrabber:
     def __init__(self, src=0):
@@ -155,9 +137,16 @@ class FrameGrabber:
         self.stopped = False
         self.frame = None
         self.lock = threading.Lock()
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.cap.set(cv2.CAP_PROP_FPS, 30) 
+        
+        # SỬ DỤNG ĐÚNG ĐỘ PHÂN GIẢI CHUẨN CỦA IMX219 (1280x720)
+        # Hệ thống sẽ lấy toàn bộ góc rộng theo chiều ngang và CÂN BẰNG TÂM TUYỆT ĐỐI
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        
+        self.cap.set(cv2.CAP_PROP_FPS, 10) 
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) 
+        
         threading.Thread(target=self._reader, daemon=True).start()
 
     def isOpened(self): return self.cap.isOpened()
@@ -168,12 +157,19 @@ class FrameGrabber:
             if not ret:
                 time.sleep(0.01)
                 continue
+                
+            # Vẫn nén về siêu nhẹ để AI mượt mà 6 FPS
+            small_frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+            
             with self.lock:
-                self.frame = frame
+                self.frame = small_frame
 
     def read(self):
         with self.lock:
-            return None if self.frame is None else self.frame.copy()
+            if self.frame is None: return None
+            f = self.frame.copy()
+            self.frame = None 
+            return f
 
     def release(self):
         self.stopped = True
@@ -182,13 +178,13 @@ class FrameGrabber:
 
 vs = FrameGrabber(0)
 if not vs.isOpened():
-    print("[ERROR] Lỗi camera.")
+    print("[ERROR] Lỗi Camera. Hãy kiểm tra kết nối!")
     sys.exit(1)
 
 cv2.namedWindow(WINDOW_NAME)
 cv2.setMouseCallback(WINDOW_NAME, adjust_counters)
 
-print("[INFO] Hệ thống sẵn sàng. Đang chạy...")
+print(f"[INFO] CCTV AI kích hoạt góc rộng thật FOV | Mượt 6 FPS...")
 
 # =====================================================================
 # VÒNG LẶP XỬ LÝ CHÍNH
@@ -201,17 +197,16 @@ while True:
         time.sleep(0.01)
         continue
 
+    # --- KHÓA CHẶT TỐC ĐỘ 6 FPS ---
     current_time = time.time()
     if (current_time - prev_time) < (1.0 / TARGET_FPS):
-        time.sleep(0.005)
+        time.sleep(0.005) 
         continue
     prev_time = current_time 
 
-    frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
     (h, w) = frame.shape[:2]
     current_centroids = []
 
-    # --- CHẠY AI ---
     blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5)
     net.setInput(blob)
     detections = net.forward()
@@ -228,16 +223,14 @@ while True:
             cY = int((startY + endY) / 2.0)
             current_centroids.append((cX, cY, startX, startY, endX, endY))
 
-    # --- LOGIC ĐẾM & LƯU FILE ---
+    # --- LOGIC ĐẾM & THEO DÕI ---
     updated_trackable_objects = dict(trackable_objects)
     seen_ids = set()
-    
-    # Biến để kiểm tra xem frame này có ai đi qua vạch làm đổi số không
-    counters_changed_this_frame = False 
+    counters_changed_this_frame = False
 
     for (cX, cY, startX, startY, endX, endY) in current_centroids:
         matched_id = None
-        min_distance = 80  
+        min_distance = 100 
 
         for obj_id, (old_cX, old_cY, zone_history, disappeared) in trackable_objects.items():
             d = np.hypot(cX - old_cX, cY - old_cY)
@@ -285,7 +278,6 @@ while True:
         text = f"ID:{matched_id} | {get_zone(cX)}"
         cv2.putText(frame, text, (startX, startY - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 150, 0), 1)
 
-    # NẾU CÓ NGƯỜI QUA VẠCH -> LƯU VÀO JSON NGAY (CHỐNG MẤT ĐIỆN)
     if counters_changed_this_frame:
         save_data(TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM)
 
@@ -293,20 +285,20 @@ while True:
         if obj_id not in seen_ids:
             cX, cY, zone_history, disappeared = updated_trackable_objects[obj_id]
             disappeared += 1
-            if disappeared > MAX_DISAPPEARED:
-                del updated_trackable_objects[obj_id]
-            else:
-                updated_trackable_objects[obj_id] = (cX, cY, zone_history, disappeared)
+            if disappeared > MAX_DISAPPEARED: del updated_trackable_objects[obj_id]
+            else: updated_trackable_objects[obj_id] = (cX, cY, zone_history, disappeared)
 
     trackable_objects = updated_trackable_objects
 
-    # --- VẼ GIAO DIỆN ---
+    # =================================================================
+    # 7. VẼ GIAO DIỆN ĐỒ HỌA
+    # =================================================================
     line_color = (0, 0, 255) if is_dragging_line else (0, 255, 255)
     line_thick = 3 if is_dragging_line else 2
     cv2.line(frame, (LINE_X, 0), (LINE_X, h), line_color, line_thick)
     
-    cv2.putText(frame, "TRONG (<--)", (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-    cv2.putText(frame, "(-->) NGOAI", (FRAME_WIDTH - 85, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+    cv2.putText(frame, "TRONG (<-- Vao)", (LINE_X - 110, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+    cv2.putText(frame, "(Ra -->) NGOAI", (LINE_X + 10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
 
     cv2.rectangle(frame, (0, 180), (120, 240), (0, 0, 0), -1)
     cv2.putText(frame, f"Vao: {TOTAL_IN}", (5, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
@@ -324,10 +316,10 @@ while True:
     rec_text = "REC: ON" if recording_enabled else "REC: OFF"
     cv2.putText(frame, rec_text, (250, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
-    # --- LƯU VIDEO ---
     if recording_enabled:
         if video_writer is None or (time.time() - chunk_start_time) >= CHUNK_DURATION:
             if video_writer is not None: video_writer.release()
+            
             existing_files = sorted(glob.glob(os.path.join(VIDEO_DIR, "*.avi")))
             while len(existing_files) >= MAX_VIDEOS:
                 os.remove(existing_files[0])
@@ -346,8 +338,8 @@ while True:
 
     cv2.imshow(WINDOW_NAME, frame)
     
-    # Bấm 'q' để thoát, nó sẽ lưu lại một lần cuối cho an toàn
-    if cv2.waitKey(1) & 0xFF == ord("q"):
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord("q"):
         save_data(TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM)
         break
 
