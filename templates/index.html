@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCTV AI Dashboard</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; }
+        h1 { text-align: center; color: #4CAF50; margin-bottom: 20px; }
+        .container { display: flex; flex-wrap: wrap; gap: 20px; max-width: 1200px; margin: 0 auto; }
+        .video-box { flex: 2; min-width: 300px; background: #1e1e1e; padding: 10px; border-radius: 8px; border: 1px solid #333; }
+        .video-box img { width: 100%; height: auto; border-radius: 4px; border: 2px solid #000; }
+        .control-box { flex: 1; min-width: 250px; background: #1e1e1e; padding: 20px; border-radius: 8px; border: 1px solid #333; display: flex; flex-direction: column; gap: 15px; }
+        
+        .stat-card { background: #2a2a2a; padding: 15px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+        .stat-info { display: flex; flex-direction: column; }
+        .stat-label { font-size: 14px; color: #aaa; }
+        .stat-value { font-size: 28px; font-weight: bold; }
+        .val-in { color: #4CAF50; } .val-out { color: #F44336; } .val-room { color: #2196F3; }
+        
+        .btn-group button { background: #444; color: white; border: none; padding: 8px 12px; font-size: 16px; border-radius: 4px; cursor: pointer; transition: 0.2s; margin-left: 5px; }
+        .btn-group button:hover { background: #666; }
+        .btn-group button:active { background: #888; }
+
+        .record-btn { padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; text-align: center; color: white; transition: 0.3s; margin-top: auto;}
+        .rec-on { background-color: #F44336; box-shadow: 0 0 10px #F44336; }
+        .rec-off { background-color: #555; }
+    </style>
+</head>
+<body>
+
+    <h1>CCTV AI COUNTER</h1>
+    
+    <div class="container">
+        <div class="video-box">
+            <img src="/video_feed" alt="Mất kết nối Camera!">
+        </div>
+
+        <div class="control-box">
+            <h3>BẢNG ĐIỀU KHIỂN</h3>
+            
+            <div class="stat-card">
+                <div class="stat-info"><span class="stat-label">KHÁCH VÀO</span><span class="stat-value val-in" id="val-in">0</span></div>
+                <div class="btn-group"><button onclick="sendAction('in_minus')">-</button><button onclick="sendAction('in_plus')">+</button></div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-info"><span class="stat-label">KHÁCH RA</span><span class="stat-value val-out" id="val-out">0</span></div>
+                <div class="btn-group"><button onclick="sendAction('out_minus')">-</button><button onclick="sendAction('out_plus')">+</button></div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-info"><span class="stat-label">TRONG PHÒNG</span><span class="stat-value val-room" id="val-room">0</span></div>
+                <div class="btn-group"><button onclick="sendAction('room_minus')">-</button><button onclick="sendAction('room_plus')">+</button></div>
+            </div>
+
+            <button id="btn-record" class="record-btn rec-off" onclick="sendAction('toggle_record')">REC: OFF</button>
+        </div>
+    </div>
+
+    <script>
+        function updateDashboard() {
+            fetch('/api/data')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('val-in').innerText = data.in;
+                    document.getElementById('val-out').innerText = data.out;
+                    document.getElementById('val-room').innerText = data.room;
+                    
+                    const btnRec = document.getElementById('btn-record');
+                    if(data.recording) {
+                        btnRec.innerText = "ĐANG GHI HÌNH (REC: ON)";
+                        btnRec.className = "record-btn rec-on";
+                    } else {
+                        btnRec.innerText = "BẬT GHI HÌNH (REC: OFF)";
+                        btnRec.className = "record-btn rec-off";
+                    }
+                }).catch(err => console.log("Đang chờ Pi..."));
+        }
+
+        function sendAction(actionType) {
+            fetch('/api/action', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: actionType})
+            }).then(() => updateDashboard());
+        }
+
+        // Tự động lấy dữ liệu mới mỗi 1 giây
+        setInterval(updateDashboard, 1000);
+        updateDashboard();
+    </script>
+</body>
+</html>
