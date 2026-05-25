@@ -10,9 +10,10 @@ import queue
 from datetime import datetime
 from collections import deque
 from flask import Flask, Response, render_template, jsonify, request
+import ncnn # Thư viện AI siêu tốc của Tencent
 
 # =====================================================================
-# 1. KHỞI TẠO HỆ THỐNG LƯU TRỮ
+# 1. KHỞI TẠO HỆ THỐNG LƯU TRỮ (JSON)
 # =====================================================================
 DATA_FILE = "counter_data.json"
 
@@ -32,20 +33,56 @@ def save_data():
 TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM = load_data()
 
 # =====================================================================
-# 2. CẤU HÌNH AI, HIỆU NĂNG & GHI HÌNH
+# 2. CẤU HÌNH YOLO-FASTEST V2 & NCNN
 # =====================================================================
-CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
-           "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
-           "dog", "horse", "motorbike", "person", "pottedplant", "sheep",
-           "sofa", "train", "tvmonitor"]
+class YoloFastestV2:
+    def __init__(self, param_path, bin_path):
+        self.net = ncnn.Net()
+        self.net.opt.use_vulkan_compute = False # Dùng 100% CPU NEON
+        self.net.opt.num_threads = 4            # Ép Pi chạy bung 4 nhân
+        
+        self.net.load_param(param_path)
+        self.net.load_model(bin_path)
+        
+        self.target_size = 256 # Tối ưu hóa cho cỡ 256x256
+        self.mean_vals = [0.0, 0.0, 0.0]
+        self.norm_vals = [1/255.0, 1/255.0, 1/255.0]
 
+    def detect(self, img, conf_thresh=0.4):
+        img_h, img_w = img.shape[:2]
+        mat_in = ncnn.Mat.from_pixels_resize(img, ncnn.Mat.PixelType.PIXEL_BGR2RGB, img_w, img_h, self.target_size, self.target_size)
+        mat_in.substract_mean_normalize(self.mean_vals, self.norm_vals)
+
+        ex = self.net.create_extractor()
+        ex.input("data", mat_in)
+        ret, mat_out = ex.extract("output") 
+        
+        bboxes = []
+        if mat_out:
+            for i in range(mat_out.h):
+                values = mat_out.row(i)
+                prob = values[1]
+                label = int(values[0])
+                
+                # Trong COCO dataset, "person" là class 0
+                if prob > conf_thresh and label == 0: 
+                    x1 = int(values[2] * img_w)
+                    y1 = int(values[3] * img_h)
+                    x2 = int(values[4] * img_w)
+                    y2 = int(values[5] * img_h)
+                    bboxes.append((x1, y1, x2, y2, prob))
+        return bboxes
+
+print("[INFO] Đang nạp lõi NCNN YOLO-Fastest V2...")
 try:
-    net = cv2.dnn.readNetFromCaffe("MobileNetSSD_deploy.prototxt", "MobileNetSSD_deploy.caffemodel")
-except:
-    print("[ERROR] Không tìm thấy file mô hình AI!")
+    yolo_net = YoloFastestV2("yolo-fastestv2.param", "yolo-fastestv2.bin")
+except Exception as e:
+    print("[ERROR] Không tìm thấy file model YOLO NCNN! Hãy kiểm tra lại.")
     sys.exit(1)
 
-CONFIDENCE_THRESHOLD = 0.5 
+# =====================================================================
+# 3. CẤU HÌNH THÔNG SỐ HỆ THỐNG
+# =====================================================================
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
 LINE_X = int(FRAME_WIDTH / 2)
@@ -80,8 +117,15 @@ class ThreadedVideoWriter:
 
 def get_zone(cx): return "INSIDE" if cx < LINE_X else "OUTSIDE"
 
+def get_cpu_temp():
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+            temp = float(f.read()) / 1000.0
+        return round(temp, 1)
+    except: return 0.0
+
 # =====================================================================
-# 3. KHỞI TẠO CAMERA (NÂNG CẤP FPS CHỤP HÌNH)
+# 4. KHỞI TẠO CAMERA (CHUẨN HD 1280x720 - CÂN TÂM IMX219)
 # =====================================================================
 class FrameGrabber:
     def __init__(self, src=0):
@@ -90,7 +134,6 @@ class FrameGrabber:
         self.frame = None
         self.lock = threading.Lock()
         
-        # Biến đếm FPS của riêng camera
         self.capture_fps = 0
         self.frame_count = 0
         self.start_time = time.time()
@@ -98,8 +141,6 @@ class FrameGrabber:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        
-        # Ép camera chụp cực nhanh ở 25 FPS
         self.cap.set(cv2.CAP_PROP_FPS, 25) 
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) 
         threading.Thread(target=self._reader, daemon=True).start()
@@ -112,7 +153,6 @@ class FrameGrabber:
             if not ret:
                 time.sleep(0.01); continue
                 
-            # Đếm số khung hình Camera bắt được mỗi giây
             self.frame_count += 1
             elapsed = time.time() - self.start_time
             if elapsed >= 1.0:
@@ -133,16 +173,16 @@ class FrameGrabber:
         time.sleep(0.05); self.cap.release()
 
 vs = FrameGrabber(0)
-if not vs.isOpened(): sys.exit(1)
+if not vs.isOpened():
+    print("[ERROR] Lỗi Camera. Hãy kiểm tra kết nối!")
+    sys.exit(1)
 
 # =====================================================================
-# 4. MÁY CHỦ WEB API (FLASK SERVER)
+# 5. MÁY CHỦ WEB API (FLASK SERVER)
 # =====================================================================
 app = Flask(__name__)
 outputFrame = None
 lock = threading.Lock()
-
-# Biến đếm FPS của CPU/AI
 processing_fps = 0
 
 @app.route("/")
@@ -162,7 +202,6 @@ def generate():
 def video_feed():
     return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
-# API GỬI DATA VỀ DASHBOARD WEB (Đã thêm 2 tham số FPS)
 @app.route("/api/data", methods=["GET"])
 def api_data():
     return jsonify({
@@ -171,7 +210,8 @@ def api_data():
         "room": PEOPLE_IN_ROOM, 
         "recording": recording_enabled,
         "cam_fps": round(vs.capture_fps, 1),
-        "ai_fps": round(processing_fps, 1)
+        "ai_fps": round(processing_fps, 1),
+        "cpu_temp": get_cpu_temp()
     })
 
 @app.route("/api/action", methods=["POST"])
@@ -197,7 +237,11 @@ def start_flask():
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True, use_reloader=False)
 
 threading.Thread(target=start_flask, daemon=True).start()
-print("\n[HỆ THỐNG ĐÃ SẴN SÀNG] Truy cập Dashboard tại: http://<IP_CỦA_PI>:5000\n")
+print("\n" + "="*50)
+print("[HỆ THỐNG ĐÃ SẴN SÀNG]")
+print(f"[ĐỊA CHỈ WEB] Truy cập: http://<ĐỊA_CHỈ_IP_CỦA_PI>:5000")
+print("[TẮT MÁY] Bấm 'Ctrl + C' trên Terminal để tắt chương trình.")
+print("="*50 + "\n")
 
 # =====================================================================
 # VÒNG LẶP XỬ LÝ CHÍNH (AI CORE)
@@ -211,7 +255,7 @@ try:
         if frame is None:
             time.sleep(0.01); continue
 
-        # Tính toán tốc độ xử lý của CPU cho AI
+        # Đo FPS của AI
         proc_frame_count += 1
         elapsed = time.time() - proc_start_time
         if elapsed >= 1.0:
@@ -219,22 +263,15 @@ try:
             proc_frame_count = 0
             proc_start_time = time.time()
 
-        (h, w) = frame.shape[:2]
         current_centroids = []
 
-        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5)
-        net.setInput(blob)
-        detections = net.forward()
+        # Chạy AI Hủy Diệt YOLO-Fastest V2 (NCNN)
+        detections = yolo_net.detect(frame, conf_thresh=0.45)
 
-        for i in np.arange(0, detections.shape[2]):
-            confidence = detections[0, 0, i, 2]
-            if confidence > CONFIDENCE_THRESHOLD:
-                idx = int(detections[0, 0, i, 1])
-                if CLASSES[idx] != "person": continue
-                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                (startX, startY, endX, endY) = box.astype("int")
-                cX = int((startX + endX) / 2.0); cY = int((startY + endY) / 2.0)
-                current_centroids.append((cX, cY, startX, startY, endX, endY))
+        for (startX, startY, endX, endY, conf) in detections:
+            cX = int((startX + endX) / 2.0)
+            cY = int((startY + endY) / 2.0)
+            current_centroids.append((cX, cY, startX, startY, endX, endY))
 
         updated_trackable_objects = dict(trackable_objects)
         seen_ids = set()
@@ -271,6 +308,7 @@ try:
             updated_trackable_objects[matched_id] = (cX, cY, zone_history, disappeared)
             seen_ids.add(matched_id)
             
+            # Vẽ Box
             cv2.rectangle(frame, (startX, startY), (endX, endY), (255, 150, 0), 2)
             cv2.circle(frame, (cX, cY), 4, (0, 0, 255), -1)
 
@@ -284,11 +322,14 @@ try:
                 else: updated_trackable_objects[obj_id] = (cX, cY, zone_history, disappeared)
         trackable_objects = updated_trackable_objects
 
-        cv2.line(frame, (LINE_X, 0), (LINE_X, h), (0, 255, 255), 2)
+        # Vẽ Line vạch kẻ
+        cv2.line(frame, (LINE_X, 0), (LINE_X, frame.shape[0]), (0, 255, 255), 2)
 
+        # Chốt hình ảnh
         with lock:
             outputFrame = frame.copy()
 
+        # Quay Video
         if recording_enabled:
             if video_writer is None or (time.time() - chunk_start_time) >= CHUNK_DURATION:
                 if video_writer is not None: video_writer.release()
@@ -296,15 +337,17 @@ try:
                 while len(existing_files) >= MAX_VIDEOS:
                     os.remove(existing_files[0]); existing_files.pop(0)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                # Video sẽ được ghi với tốc độ thực tế của AI để tránh video bị tua nhanh
-                video_writer = ThreadedVideoWriter(os.path.join(VIDEO_DIR, f"cctv_{timestamp}.avi"), cv2.VideoWriter_fourcc(*'XVID'), processing_fps if processing_fps > 0 else 5, (FRAME_WIDTH, FRAME_HEIGHT))
+                rec_fps = processing_fps if processing_fps > 0 else 10
+                video_writer = ThreadedVideoWriter(os.path.join(VIDEO_DIR, f"cctv_{timestamp}.avi"), cv2.VideoWriter_fourcc(*'XVID'), rec_fps, (FRAME_WIDTH, FRAME_HEIGHT))
                 chunk_start_time = time.time()
             video_writer.write(frame)
         else:
             if video_writer is not None: video_writer.release(); video_writer = None
 
 except KeyboardInterrupt:
+    print("\n[INFO] Đang lưu dữ liệu và tắt hệ thống...")
     save_data()
 
 if video_writer is not None: video_writer.release()
 vs.release()
+print("[INFO] Đã tắt Camera an toàn!")
