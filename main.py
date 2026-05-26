@@ -68,18 +68,18 @@ class ThreadedVideoWriter:
         self.writer.release()
 
 # =====================================================================
-# 3. KIẾN TRÚC CAMERA (CHỤP FULL ĐỘ PHÂN GIẢI CẢM BIẾN)
+# 3. KIẾN TRÚC CAMERA (SỬ DỤNG HARDWARE BINNING 1640x1232)
 # =====================================================================
 class CameraThread:
     def __init__(self):
-        print("[INFO] Đang khởi động Picamera2 ở FULL độ phân giải 3280x2464...")
+        print("[INFO] Đang khởi động Picamera2 ở chế độ Binned 1640x1232...")
         self.picam2 = Picamera2()
         
-        # Mở toang cảm biến lấy 3280x2464 để đảm bảo không một phần mềm nào tự ý cắt lệch góc
-        # Giới hạn 10 FPS để CPU có thời gian bóp mảng dữ liệu khổng lồ này
+        # Sử dụng 1640x1232 (2x2 Binning) để giữ nguyên FOV rộng 
+        # nhưng giảm tải CPU 4 lần, mở khóa giới hạn FPS lên 30.
         self.config = self.picam2.create_video_configuration(
-            main={"size": (3280, 2464), "format": "RGB888"},
-            controls={"FrameRate": 10} 
+            main={"size": (1640, 1232), "format": "RGB888"},
+            controls={"FrameRate": 30} 
         )
         
         self.picam2.configure(self.config)
@@ -95,7 +95,6 @@ class CameraThread:
         
         while not self.stopped:
             try:
-                # Bức ảnh thô khổng lồ 3280x2464
                 frame_raw = self.picam2.capture_array()
                 
                 with frame_lock:
@@ -190,7 +189,6 @@ def main():
     net.load_model("yolo-fastest-1.1.bin")
     
     AI_SIZE = 320
-    # Đặt khung web là hình vuông 640x640 cho đồng bộ với thuật toán cắt ảnh
     FRAME_SIZE = 640 
     LINE_X = FRAME_SIZE // 2 
     
@@ -215,18 +213,17 @@ def main():
                 if latest_frame is None:
                     time.sleep(0.01)
                     continue
-                # Nhận ảnh 3280x2464 gốc
+                # Nhận ảnh 1640x1232 đã binned
                 frame_raw = latest_frame.copy()
                 latest_frame = None 
 
             # ==================================================================
-            # QUY TRÌNH: CẮT CHÍNH GIỮA -> THU NHỎ -> XỬ LÝ -> ĐỔI MÀU CUỐI CÙNG
+            # QUY TRÌNH: CẮT CHÍNH GIỮA -> THU NHỎ -> XỬ LÝ
             # ==================================================================
-            # 1. Cắt lấy hình vuông 2464x2464 chính giữa (Bỏ 408 pixel hai bên rìa)
-            # Dòng này đảm bảo ảnh luôn nằm chuẩn ở giữa, không bị lệch trái/phải.
-            square_raw = frame_raw[:, 408:2872] 
+            # 1. Cắt lấy hình vuông 1232x1232 chính giữa (Bỏ 204 pixel hai bên rìa)
+            square_raw = frame_raw[:, 204:1436] 
             
-            # 2. Bóp hình vuông khổng lồ đó xuống 320x320 cho AI
+            # 2. Bóp hình vuông xuống 320x320 cho AI (CPU bây giờ xử lý rất nhẹ)
             resized_ai = cv2.resize(square_raw, (AI_SIZE, AI_SIZE), interpolation=cv2.INTER_LINEAR)
             in_mat = ncnn.Mat.from_pixels(resized_ai, ncnn.Mat.PixelType.PIXEL_RGB, AI_SIZE, AI_SIZE)
             
@@ -249,8 +246,6 @@ def main():
                     score = values[1]
 
                     if score > 0.45 and class_id in [0, 1]: 
-                        
-                        # Ánh xạ tọa độ siêu chuẩn (Tất cả đều là vuông 1:1)
                         if values[2] <= 1.5: 
                             x1 = int(values[2] * FRAME_SIZE)
                             y1 = int(values[3] * FRAME_SIZE)
@@ -269,7 +264,6 @@ def main():
                         cY = int((y1 + y2) / 2.0)
                         current_centroids.append((cX, cY, x1, y1, x2, y2))
                         
-                        # Vẽ khung lên mảng hình hiện tại
                         cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         label = f"Nguoi: {score*100:.1f}%"
                         cv2.putText(display_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
@@ -281,7 +275,9 @@ def main():
 
             for (cX, cY, startX, startY, endX, endY) in current_centroids:
                 matched_id = None
-                min_distance = 80 
+                # Nới lỏng khoảng cách bắt điểm từ 80 lên 150 để giữ ID tốt hơn khi người chạy nhanh
+                min_distance = 150 
+                
                 for obj_id, (old_cX, old_cY, zone_history, disappeared) in trackable_objects.items():
                     d = np.hypot(cX - old_cX, cY - old_cY)
                     if d < min_distance:
@@ -338,7 +334,6 @@ def main():
             
             trackable_objects = updated_trackable_objects
 
-            # Vẽ vạch kẻ ngay giữa hình vuông
             cv2.line(display_frame, (LINE_X, 0), (LINE_X, FRAME_SIZE), (0, 255, 255), 2)
             
             frames_ai += 1
@@ -348,9 +343,6 @@ def main():
                 frames_ai = 0
                 prev_ai_time = now
 
-            # ==================================================================
-            # BƯỚC CUỐI CÙNG: ĐẢO MÀU LẠI NHƯ BẠN YÊU CẦU TRƯỚC KHI XUẤT 
-            # ==================================================================
             display_frame_corrected = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
 
             if recording_enabled:
@@ -370,7 +362,6 @@ def main():
                     video_writer.release()
                     video_writer = None
 
-            # CHỐT KHUNG HÌNH WEB
             with frame_lock:
                 output_frame_bgr = display_frame.copy()
 
