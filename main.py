@@ -68,15 +68,16 @@ class ThreadedVideoWriter:
         self.writer.release()
 
 # =====================================================================
-# 3. KIẾN TRÚC CAMERA (GIỮ NGUYÊN LOGIC CODE CŨ CỦA BẠN)
+# 3. KIẾN TRÚC CAMERA
 # =====================================================================
 class CameraThread:
     def __init__(self):
         print("[INFO] Đang khởi động Picamera2...")
         self.picam2 = Picamera2()
         
-        # SỬ DỤNG ĐÚNG CONFIG TỪ CODE CŨ CỦA BẠN (Đã được chứng minh là chạy đúng màu)
-        self.config = self.picam2.create_preview_configuration(main={"size": (640, 480), "format": "BGR888"})
+        # [FIX 1] Trở về BGR888 chuẩn và lấy góc rộng (video_configuration)
+        self.config = self.picam2.create_video_configuration(main={"size": (640, 480), "format": "BGR888"})
+        
         self.picam2.configure(self.config)
         self.picam2.start()
         
@@ -90,7 +91,7 @@ class CameraThread:
         
         while not self.stopped:
             try:
-                # Lấy mảng gốc y như code cũ
+                # Array lúc này là BGR chuẩn của OpenCV
                 frame_raw = self.picam2.capture_array()
                 
                 with frame_lock:
@@ -209,17 +210,23 @@ def main():
                 if latest_frame is None:
                     time.sleep(0.01)
                     continue
+                # frame_raw đang là chuẩn BGR từ Camera
                 frame_raw = latest_frame.copy()
-                latest_frame = None # Xóa ảnh cũ để ép AI chờ ảnh mới (Tránh lỗi FPS ảo)
+                latest_frame = None 
 
             # ==================================================================
-            # ỨNG DỤNG ĐÚNG CÔNG THỨC FIX MÀU TỪ CODE CŨ CỦA BẠN
-            # 1. Chuyển ảnh ra chuẩn BGR để hiển thị lên màn hình / Web / Video
-            display_frame = cv2.cvtColor(frame_raw, cv2.COLOR_RGB2BGR)
+            # [FIX 2] TỐI GIẢN HÓA QUÁ TRÌNH LỌC MÀU
+            # ==================================================================
             
-            # 2. Giữ nguyên mảng gốc, chỉ resize để nạp vào AI
+            # Web: Dùng trực tiếp BGR, KHÔNG đổi màu nữa để tránh bị ngược
+            display_frame = frame_raw.copy()
+            
+            # AI: Cắt ảnh BGR...
             resized_ai = cv2.resize(frame_raw, (AI_SIZE, AI_SIZE))
-            in_mat = ncnn.Mat.from_pixels(resized_ai, ncnn.Mat.PixelType.PIXEL_RGB, AI_SIZE, AI_SIZE)
+            
+            # ...Sau đó dùng PIXEL_BGR2RGB để NCNN tự lật sang RGB ở bên trong
+            in_mat = ncnn.Mat.from_pixels(resized_ai, ncnn.Mat.PixelType.PIXEL_BGR2RGB, AI_SIZE, AI_SIZE)
+            
             # ==================================================================
             
             in_mat.substract_mean_normalize([0.0, 0.0, 0.0], [1/255.0, 1/255.0, 1/255.0])
@@ -236,12 +243,22 @@ def main():
                     class_id = int(values[0])
                     score = values[1]
 
-                    # Áp dụng ngưỡng 50% giống hệt code cũ của bạn
-                    if score > 0.50 and class_id == 0: 
-                        x1 = int(values[2] * FRAME_W)
-                        y1 = int(values[3] * FRAME_H)
-                        x2 = int(values[4] * FRAME_W)
-                        y2 = int(values[5] * FRAME_H)
+                    if score > 0.45 and class_id in [0, 1]: 
+                        
+                        # [FIX 3] TỰ ĐỘNG THÍCH ỨNG TỌA ĐỘ BBOX
+                        # Kiểm tra xem mô hình trả về % (0->1) hay pixel thực (0->320)
+                        if values[2] <= 1.5: 
+                            # Trường hợp trả về tỷ lệ phần trăm (Normalized)
+                            x1 = int(values[2] * FRAME_W)
+                            y1 = int(values[3] * FRAME_H)
+                            x2 = int(values[4] * FRAME_W)
+                            y2 = int(values[5] * FRAME_H)
+                        else:
+                            # Trường hợp trả về kích thước AI (Absolute)
+                            x1 = int((values[2] / AI_SIZE) * FRAME_W)
+                            y1 = int((values[3] / AI_SIZE) * FRAME_H)
+                            x2 = int((values[4] / AI_SIZE) * FRAME_W)
+                            y2 = int((values[5] / AI_SIZE) * FRAME_H)
                         
                         x1, y1 = max(0, x1), max(0, y1)
                         x2, y2 = min(FRAME_W, x2), min(FRAME_H, y2)
@@ -250,7 +267,7 @@ def main():
                         cY = int((y1 + y2) / 2.0)
                         current_centroids.append((cX, cY, x1, y1, x2, y2))
                         
-                        # Vẽ khung lên display_frame (Ảnh BGR chuẩn màu)
+                        # Vẽ khung xanh lá BGR lên luồng hiển thị
                         cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         label = f"Nguoi: {score*100:.1f}%"
                         cv2.putText(display_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
