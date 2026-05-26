@@ -75,8 +75,6 @@ class CameraThread:
         print("[INFO] Đang khởi động Picamera2 ở chế độ Binned 1640x1232...")
         self.picam2 = Picamera2()
         
-        # Sử dụng 1640x1232 (2x2 Binning) để giữ nguyên FOV rộng 
-        # nhưng giảm tải CPU 4 lần, mở khóa giới hạn FPS lên 30.
         self.config = self.picam2.create_video_configuration(
             main={"size": (1640, 1232), "format": "RGB888"},
             controls={"FrameRate": 30} 
@@ -170,6 +168,87 @@ def api_action():
 # =====================================================================
 # 5. LUỒNG AI CHÍNH (XỬ LÝ ẢNH BẰNG PHẦN MỀM)
 # =====================================================================
+
+def get_proposals(feat_mat, stride, anchors, prob_threshold, frame_size, ai_size):
+    """
+    Hàm giải mã (Decoder) chuyên dụng cho YOLO-FastestV2.
+    Sử dụng kỹ thuật Flatten để ép Numpy đọc đúng ma trận của NCNN.
+    """
+    # 1. Tự tính toán số lượng ô lưới (Grid) chuẩn thay vì dựa vào NCNN
+    grid_h = ai_size // stride
+    grid_w = ai_size // stride
+
+    # 2. Đập phẳng toàn bộ bộ nhớ thành 1 chiều để loại bỏ lỗi sắp xếp sai
+    feat_flat = np.array(feat_mat).flatten()
+
+    # 3. Tính toán linh hoạt số Kênh (Channels). Dù model bạn train 80 class hay 2 class đều chạy được.
+    c = len(feat_flat) // (grid_h * grid_w)
+
+    # 4. Dựng lại mảng theo đúng thứ tự vật lý do lớp Permute tạo ra: (Cao, Rộng, Kênh)
+    feat = feat_flat.reshape((grid_h, grid_w, c))
+
+    # 5. Đảo ngược lại thành (Kênh, Cao, Rộng) để Code Python dễ cắt lớp
+    feat = feat.transpose(2, 0, 1)
+
+    num_anchors = 3
+
+    # Cắt 3 cụm thông tin riêng biệt của Decoupled Head
+    reg = feat[0:12, :, :].reshape((num_anchors, 4, grid_h, grid_w)) # Tọa độ x,y,w,h
+    obj = feat[12:15, :, :]                                          # Độ tự tin có vật thể
+    cls = feat[15:, :, :]                                            # Phân loại đối tượng
+
+    # Hàm đưa giá trị thô về tỷ lệ phần trăm (0.0 -> 1.0)
+    def sigmoid(x):
+        return 1.0 / (1.0 + np.exp(-np.clip(x, -50, 50)))
+
+    # Tính điểm tự tin và lọc nhanh các điểm nghi ngờ có người
+    obj_score = sigmoid(obj) 
+    anch_idx, y_idx, x_idx = np.where(obj_score > prob_threshold)
+    
+    boxes, scores, class_ids = [], [], []
+    scale = frame_size / float(ai_size)
+    
+    for i in range(len(anch_idx)):
+        a = anch_idx[i]
+        y = y_idx[i]
+        x = x_idx[i]
+        
+        # Kiểm tra đây là người hay xe hay vật khác
+        cls_vals = cls[:, y, x]
+        cls_id = np.argmax(cls_vals)
+        cls_score_val = sigmoid(cls_vals[cls_id]) # Phải sigmoid để ra tỷ lệ chuẩn
+        
+        # Tổng điểm = (Độ tự tin có vật) * (Độ tự tin đó là con người)
+        score = obj_score[a, y, x] * cls_score_val
+        
+        # Chỉ nhận ID 0 (Người) và ID 1 (Xe đạp/máy)
+        if score > prob_threshold and cls_id in [0, 1]:
+            dx = sigmoid(reg[a, 0, y, x])
+            dy = sigmoid(reg[a, 1, y, x])
+            dw = sigmoid(reg[a, 2, y, x])
+            dh = sigmoid(reg[a, 3, y, x])
+            
+            # Công thức giải mã tọa độ bản lề của YOLOv5 / FastestV2
+            pb_cx = (x + dx * 2.0 - 0.5) * stride
+            pb_cy = (y + dy * 2.0 - 0.5) * stride
+            
+            anchor_w = anchors[a][0]
+            anchor_h = anchors[a][1]
+            
+            pb_w = ((dw * 2.0)**2) * anchor_w
+            pb_h = ((dh * 2.0)**2) * anchor_h
+            
+            x1 = pb_cx - pb_w * 0.5
+            y1 = pb_cy - pb_h * 0.5
+            
+            # Lưu lại vào mảng để đưa qua bộ lọc trùng lặp NMS
+            boxes.append([int(x1 * scale), int(y1 * scale), int(pb_w * scale), int(pb_h * scale)])
+            scores.append(float(score))
+            class_ids.append(int(cls_id))
+            
+    return boxes, scores, class_ids
+
+
 def main():
     global latest_frame, output_frame_bgr, ai_fps
     global TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM
@@ -181,14 +260,16 @@ def main():
     log.setLevel(logging.ERROR) 
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False), daemon=True).start()
     
-    print("[INFO] Đang load model YOLO-Fastest v1.1...")
+    print("[INFO] Đang load model YOLO-Fastest v2...")
     net = ncnn.Net()
     net.opt.use_vulkan_compute = False
     net.opt.num_threads = 4 
-    net.load_param("yolo-fastest-1.1-xl.param")
-    net.load_model("yolo-fastest-1.1-xl.bin")
     
-    AI_SIZE = 320
+    # SỬA TÊN FILE VÀO ĐÂY
+    net.load_param("yolo-fastestv2-opt.param")
+    net.load_model("yolo-fastestv2-opt.bin")
+    
+    AI_SIZE = 352 # YOLOv2 thường train ở chuẩn 352x352, có thể hạ 320 nếu cần chạy nhanh
     FRAME_SIZE = 640 
     LINE_X = FRAME_SIZE // 2 
     
@@ -213,49 +294,58 @@ def main():
                 if latest_frame is None:
                     time.sleep(0.01)
                     continue
-                # Nhận ảnh 1640x1232 đã binned
                 frame_raw = latest_frame.copy()
                 latest_frame = None 
 
-            # ==================================================================
-            # QUY TRÌNH: CẮT CHÍNH GIỮA -> THU NHỎ -> XỬ LÝ
-            # ==================================================================
-            # 1. Cắt lấy hình vuông 1232x1232 chính giữa (Bỏ 204 pixel hai bên rìa)
+            # Cắt lấy hình vuông 1232x1232 chính giữa
             square_raw = frame_raw[:, 204:1436] 
             
-            # 2. Bóp hình vuông xuống 320x320 cho AI (CPU bây giờ xử lý rất nhẹ)
             resized_ai = cv2.resize(square_raw, (AI_SIZE, AI_SIZE), interpolation=cv2.INTER_LINEAR)
             in_mat = ncnn.Mat.from_pixels(resized_ai, ncnn.Mat.PixelType.PIXEL_RGB, AI_SIZE, AI_SIZE)
             
-            # 3. Bóp hình vuông đó xuống 640x640 để làm mảng vẽ hiển thị Web
             display_frame = cv2.resize(square_raw, (FRAME_SIZE, FRAME_SIZE), interpolation=cv2.INTER_LINEAR)
-            # ==================================================================
 
             in_mat.substract_mean_normalize([0.0, 0.0, 0.0], [1/255.0, 1/255.0, 1/255.0])
 
             ex = net.create_extractor()
-            ex.input("data", in_mat) 
-            ret, out_mat = ex.extract("output") 
+            ex.input("input.1", in_mat) # Tên cổng vào của bản v2
+            
+            # Trích xuất 2 nhánh Output của Decoupled Head
+            ret1, out_mat1 = ex.extract("794") 
+            ret2, out_mat2 = ex.extract("796") 
+
+            boxes = []
+            scores = []
+            class_ids = []
+            
+            CONFIDENCE_THRESHOLD = 0.30
+
+            # Xử lý nhánh 1 (Độ phân giải cao, bắt người nhỏ)
+            if out_mat1:
+                anchors_16 = [[12, 18], [37, 49], [52, 132]]
+                b, s, c = get_proposals(out_mat1, 16, anchors_16, CONFIDENCE_THRESHOLD, FRAME_SIZE, AI_SIZE)
+                boxes.extend(b)
+                scores.extend(s)
+                class_ids.extend(c)
+                
+            # Xử lý nhánh 2 (Độ phân giải thấp, bắt người to/gần)
+            if out_mat2:
+                anchors_32 = [[115, 73], [119, 199], [242, 238]]
+                b, s, c = get_proposals(out_mat2, 32, anchors_32, CONFIDENCE_THRESHOLD, FRAME_SIZE, AI_SIZE)
+                boxes.extend(b)
+                scores.extend(s)
+                class_ids.extend(c)
 
             current_centroids = []
             
-            if out_mat:
-                for i in range(out_mat.h):
-                    values = out_mat.row(i)
-                    class_id = int(values[0])
-                    score = values[1]
-
-                    if score > 0.30 and class_id in [0, 1]: 
-                        if values[2] <= 1.5: 
-                            x1 = int(values[2] * FRAME_SIZE)
-                            y1 = int(values[3] * FRAME_SIZE)
-                            x2 = int(values[4] * FRAME_SIZE)
-                            y2 = int(values[5] * FRAME_SIZE)
-                        else:
-                            x1 = int((values[2] / AI_SIZE) * FRAME_SIZE)
-                            y1 = int((values[3] / AI_SIZE) * FRAME_SIZE)
-                            x2 = int((values[4] / AI_SIZE) * FRAME_SIZE)
-                            y2 = int((values[5] / AI_SIZE) * FRAME_SIZE)
+            # Khử nhiễu các khung hình trùng lặp bằng thuật toán NMS của OpenCV
+            if len(boxes) > 0:
+                indices = cv2.dnn.NMSBoxes(boxes, scores, CONFIDENCE_THRESHOLD, 0.45)
+                if len(indices) > 0:
+                    for i in np.array(indices).flatten():
+                        x, y, w, h = boxes[i]
+                        x1, y1 = x, y
+                        x2, y2 = x + w, y + h
                         
                         x1, y1 = max(0, x1), max(0, y1)
                         x2, y2 = min(FRAME_SIZE, x2), min(FRAME_SIZE, y2)
@@ -265,31 +355,26 @@ def main():
                         current_centroids.append((cX, cY, x1, y1, x2, y2))
                         
                         cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        label = f"Nguoi: {score*100:.1f}%"
+                        label = f"Nguoi: {scores[i]*100:.1f}%"
                         cv2.putText(display_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
             # --- THEO DÕI & ĐẾM ---
             matches = []
             
-            # 1. Dự đoán vị trí tương lai và đo khoảng cách (Greedy Matching)
             for i, (cX, cY, startX, startY, endX, endY) in enumerate(current_centroids):
                 for obj_id, obj_data in trackable_objects.items():
-                    # Đảm bảo cấu trúc dữ liệu mới: (cX, cY, dx, dy, zone_history, disappeared)
-                    if len(obj_data) == 4: # Khởi tạo mặc định nếu là data đời cũ
+                    if len(obj_data) == 4:
                         old_cX, old_cY, zone_history, disappeared = obj_data
                         dx, dy = 0, 0
                     else:
                         old_cX, old_cY, dx, dy, zone_history, disappeared = obj_data
                     
-                    # DỰ ĐOÁN QUÁN TÍNH: Lấy vị trí cũ + (hướng đi * số frame đã biến mất)
                     pred_cX = old_cX + (dx * (disappeared + 1))
                     pred_cY = old_cY + (dy * (disappeared + 1))
                     
-                    # So sánh vị trí thực tế với vị trí "dự đoán"
                     d = np.hypot(cX - pred_cX, cY - pred_cY)
                     matches.append((d, i, obj_id))
 
-            # 2. Sắp xếp ưu tiên ghép các cặp ở gần nhau nhất
             matches.sort(key=lambda x: x[0])
             
             used_centroids = set()
@@ -297,10 +382,8 @@ def main():
             updated_trackable_objects = {}
             counters_changed = False
             
-            # Bán kính tìm kiếm được tăng vọt lên 250 vì ta đã có dự đoán hướng đi cực chuẩn
             MAX_DISTANCE = 250 
 
-            # 3. Tiến hành ghép nối ID cũ với Box mới
             for d, i, obj_id in matches:
                 if d > MAX_DISTANCE: continue
                 if i in used_centroids or obj_id in used_ids: continue
@@ -311,11 +394,9 @@ def main():
                 old_cX = obj_data[0]
                 old_cY = obj_data[1]
 
-                # Tính VẬN TỐC (hướng đi hiện tại) để dành cho lần sau lỡ bị mất dấu
                 dx = cX - old_cX
                 dy = cY - old_cY
 
-                # Cập nhật vùng (INSIDE/OUTSIDE)
                 if len(obj_data) == 4: zone_history = obj_data[2]
                 else: zone_history = obj_data[4]
 
@@ -327,7 +408,6 @@ def main():
                 used_centroids.add(i)
                 used_ids.add(obj_id)
 
-            # 4. Cấp ID cho đối tượng mới toanh
             for i, (cX, cY, startX, startY, endX, endY) in enumerate(current_centroids):
                 if i not in used_centroids:
                     zone = "INSIDE" if cX < LINE_X else "OUTSIDE"
@@ -336,7 +416,6 @@ def main():
                     used_ids.add(next_object_id)
                     next_object_id += 1
 
-            # 5. Logic băng qua vạch (Chỉ xử lý đếm khi ID đang hiển thị thực tế)
             for obj_id, data in updated_trackable_objects.items():
                 cX, cY, dx, dy, zone_history, disappeared = data
                 if disappeared == 0: 
@@ -349,13 +428,13 @@ def main():
                         idx_out = final_comp.index("OUTSIDE")
                         idx_in = final_comp.index("INSIDE")
                         
-                        if idx_out < idx_in: # Đi TỪ NGOÀI VÀO TRONG
+                        if idx_out < idx_in: 
                             TOTAL_IN += 1
                             PEOPLE_IN_ROOM += 1
                             updated_trackable_objects[obj_id] = (cX, cY, dx, dy, deque(["INSIDE"], maxlen=10), 0)
                             counters_changed = True
                             
-                        elif idx_in < idx_out: # Đi TỪ TRONG RA NGOÀI
+                        elif idx_in < idx_out: 
                             TOTAL_OUT += 1
                             PEOPLE_IN_ROOM = max(0, PEOPLE_IN_ROOM - 1)
                             updated_trackable_objects[obj_id] = (cX, cY, dx, dy, deque(["OUTSIDE"], maxlen=10), 0)
@@ -363,7 +442,6 @@ def main():
 
             if counters_changed: save_data()
 
-            # 6. Kéo dài tuổi thọ cho các ID lỡ bị mất dấu (Disappeared)
             for obj_id, obj_data in trackable_objects.items():
                 if obj_id not in used_ids:
                     if len(obj_data) == 4:
@@ -374,12 +452,10 @@ def main():
                     
                     disappeared += 1
                     if disappeared <= MAX_DISAPPEARED:
-                        # Vẫn giữ trong bộ nhớ, chờ người này "hiện hình" lại
                         updated_trackable_objects[obj_id] = (old_cX, old_cY, dx, dy, zone_history, disappeared)
 
             trackable_objects = updated_trackable_objects
 
-            # Vẽ vạch kẻ ngay giữa hình vuông
             cv2.line(display_frame, (LINE_X, 0), (LINE_X, FRAME_SIZE), (0, 255, 255), 2)
             
             frames_ai += 1
