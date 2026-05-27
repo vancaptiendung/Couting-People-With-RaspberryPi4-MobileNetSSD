@@ -40,9 +40,9 @@
             <div class="fps-overlay">
                 <div>CAM: <span id="val-cam-fps">0</span> FPS</div>
                 <div style="color: #FFC107;">AI : <span id="val-ai-fps">0</span> FPS</div>
-                <div style="margin-top: 5px; border-top: 1px solid #555; padding-top: 5px;">
+                <!-- <div style="margin-top: 5px; border-top: 1px solid #555; padding-top: 5px;">
                     TEMP: <span id="val-cpu-temp" style="font-weight: bold;">0</span> °C
-                </div>
+                </div> -->
             </div>
             <img src="/video_feed" alt="Mất kết nối Camera!">
         </div>
@@ -65,7 +65,7 @@
                 <div class="btn-group"><button onclick="sendAction('room_minus')">-</button><button onclick="sendAction('room_plus')">+</button></div>
             </div>
 
-            <button id="btn-record" class="record-btn rec-off" onclick="sendAction('toggle_record')">REC: OFF</button>
+            <button id="btn-record" class="record-btn rec-off" onclick="sendAction('toggle_record')">.</button>
         </div>
     </div>
 
@@ -84,10 +84,10 @@
                     
                     const btnRec = document.getElementById('btn-record');
                     if(data.recording) {
-                        btnRec.innerText = "ĐANG GHI HÌNH (REC: ON)";
+                        btnRec.innerText = "..";
                         btnRec.className = "record-btn rec-on";
                     } else {
-                        btnRec.innerText = "BẬT GHI HÌNH (REC: OFF)";
+                        btnRec.innerText = "...";
                         btnRec.className = "record-btn rec-off";
                     }
                 }).catch(err => console.log("Đang chờ Pi..."));
