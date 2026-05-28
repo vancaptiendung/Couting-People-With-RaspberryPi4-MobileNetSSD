@@ -9,6 +9,7 @@ import time
 import json
 import glob
 import queue
+import shutil
 from collections import deque
 from datetime import datetime
 from flask import Flask, Response, render_template, jsonify, request
@@ -162,6 +163,13 @@ def get_cpu_temp():
             return round(float(f.read()) / 1000.0, 1)
     except: return 0.0
 
+def get_storage_free_gb():
+    try:
+        usage = shutil.disk_usage("/")
+        return round(usage.free / (1024 ** 3), 1)
+    except:
+        return 0.0
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -188,7 +196,8 @@ def api_data():
         "in": TOTAL_IN, "out": TOTAL_OUT, "room": PEOPLE_IN_ROOM, 
         "recording": recording_enabled,
         "cam_fps": round(cam_fps, 1), "ai_fps": round(ai_fps, 1),
-        "cpu_temp": get_cpu_temp()
+        "cpu_temp": get_cpu_temp(),
+        "storage_free_gb": get_storage_free_gb()
     })
 
 @app.route("/api/action", methods=["POST"])

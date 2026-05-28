@@ -3,70 +3,554 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCTV AI Dashboard</title>
+    <title>SecureView Pro - People Counter</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
     <style>
-        body { margin: 0; padding: 20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; }
-        h1 { text-align: center; color: #4CAF50; margin-bottom: 20px; }
-        .container { display: flex; flex-wrap: wrap; gap: 20px; max-width: 1200px; margin: 0 auto; }
-        .video-box { flex: 2; min-width: 300px; background: #1e1e1e; padding: 10px; border-radius: 8px; border: 1px solid #333; position: relative; }
-        .video-box img { width: 100%; height: auto; border-radius: 4px; border: 2px solid #000; }
-        
-        /* Bảng chỉ số FPS hiển thị góc trên luồng Video */
-        .fps-overlay { position: absolute; top: 15px; left: 15px; background: rgba(0, 0, 0, 0.7); padding: 8px 12px; border-radius: 4px; border: 1px solid #555; font-size: 14px; font-family: monospace; color: #00FF00; }
+        :root {
+            --bg: #131313;
+            --surface: #1f1f1f;
+            --surface-high: #2a2a2a;
+            --surface-highest: #353535;
+            --surface-low: #1b1b1b;
+            --surface-lowest: #0e0e0e;
+            --border: #5c3f40;
+            --text: #e2e2e2;
+            --text-muted: #e5bdbe;
+            --primary: #ffb3b6;
+            --primary-strong: #e11d48;
+            --primary-soft: #ffdada;
+            --secondary: #c8c6c5;
+            --secondary-strong: #4a4949;
+            --tertiary: #747373;
+            --success: #6ee7b7;
+            --warn: #f59e0b;
+            --danger: #ffb4ab;
+            --glass: rgba(14, 14, 14, 0.62);
+        }
 
-        .control-box { flex: 1; min-width: 250px; background: #1e1e1e; padding: 20px; border-radius: 8px; border: 1px solid #333; display: flex; flex-direction: column; gap: 15px; }
-        
-        .stat-card { background: #2a2a2a; padding: 15px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
-        .stat-info { display: flex; flex-direction: column; }
-        .stat-label { font-size: 14px; color: #aaa; }
-        .stat-value { font-size: 28px; font-weight: bold; }
-        .val-in { color: #4CAF50; } .val-out { color: #F44336; } .val-room { color: #2196F3; }
-        
-        .btn-group button { background: #444; color: white; border: none; padding: 8px 12px; font-size: 16px; border-radius: 4px; cursor: pointer; transition: 0.2s; margin-left: 5px; }
-        .btn-group button:hover { background: #666; }
-        .btn-group button:active { background: #888; }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(225, 29, 72, 0.16), transparent 26%),
+                radial-gradient(circle at top right, rgba(255, 179, 182, 0.08), transparent 20%),
+                linear-gradient(180deg, #171717 0%, var(--bg) 32%, #0f0f0f 100%);
+        }
 
-        .record-btn { padding: 15px; font-size: 18px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; text-align: center; color: white; transition: 0.3s; margin-top: auto;}
-        .rec-on { background-color: #F44336; box-shadow: 0 0 10px #F44336; }
-        .rec-off { background-color: #555; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+
+        .app-shell {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px 24px;
+            border-bottom: 1px solid rgba(92, 63, 64, 0.6);
+            background: rgba(14, 14, 14, 0.8);
+            backdrop-filter: blur(12px);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-mark {
+            width: 42px;
+            height: 42px;
+            display: grid;
+            place-items: center;
+            border-radius: 14px;
+            color: #40000c;
+            background: linear-gradient(135deg, var(--primary-soft), var(--primary));
+            box-shadow: 0 0 0 1px rgba(255, 179, 182, 0.14), 0 18px 40px rgba(225, 29, 72, 0.25);
+        }
+
+        .brand-title {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--primary-soft);
+        }
+
+        .brand-subtitle {
+            margin: 2px 0 0;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(92, 63, 64, 0.8);
+            background: rgba(31, 31, 31, 0.75);
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .status-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--primary-strong);
+            box-shadow: 0 0 0 6px rgba(225, 29, 72, 0.18);
+        }
+
+        .layout {
+            width: min(1600px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 20px 0 28px;
+        }
+
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1.65fr 0.95fr;
+            gap: 16px;
+            align-items: start;
+        }
+
+        .panel {
+            border: 1px solid rgba(92, 63, 64, 0.75);
+            border-radius: 20px;
+            background: linear-gradient(180deg, rgba(31, 31, 31, 0.96), rgba(23, 23, 23, 0.98));
+            box-shadow: 0 20px 45px rgba(0, 0, 0, 0.28);
+        }
+
+        .video-panel {
+            position: relative;
+            overflow: hidden;
+            min-height: 520px;
+        }
+
+        .video-stream {
+            width: 100%;
+            height: 100%;
+            min-height: 520px;
+            object-fit: cover;
+            display: block;
+            opacity: 0.94;
+            background: var(--surface-lowest);
+        }
+
+        .overlay {
+            position: absolute;
+            border: 1px solid rgba(92, 63, 64, 0.5);
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+        }
+
+        .overlay.top-left {
+            top: 16px;
+            left: 16px;
+            padding: 12px 14px;
+        }
+
+        .overlay.top-right {
+            top: 16px;
+            right: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 12px;
+        }
+
+        .overlay.bottom {
+            left: 16px;
+            right: 16px;
+            bottom: 16px;
+            padding: 14px;
+        }
+
+        .overlay-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0;
+            font-size: 13px;
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: 0.03em;
+        }
+
+        .camera-badge {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--primary-strong);
+            box-shadow: 0 0 0 7px rgba(225, 29, 72, 0.14);
+        }
+
+        .rec-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 800;
+            background: rgba(225, 29, 72, 0.9);
+            color: #fff;
+            letter-spacing: 0.08em;
+        }
+
+        .rec-indicator .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #fff;
+        }
+
+        .pulse {
+            animation: pulse 1.4s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .control-panel {
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .section-title {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--primary-soft);
+        }
+
+        .subtle {
+            margin: 4px 0 0;
+            color: var(--text-muted);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .stat-card {
+            padding: 16px;
+            border-radius: 18px;
+            border: 1px solid rgba(92, 63, 64, 0.7);
+            background: linear-gradient(180deg, rgba(42, 42, 42, 0.9), rgba(31, 31, 31, 0.95));
+        }
+
+        .stat-card.wide {
+            grid-column: span 2;
+        }
+
+        .stat-head {
+            display: flex;
+            align-items: start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .stat-head-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .stat-value-row {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .stat-value {
+            font-size: 34px;
+            line-height: 1;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            color: #fff;
+        }
+
+        .stat-note {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-muted);
+        }
+
+        .stat-note.good {
+            color: var(--primary-soft);
+            background: rgba(225, 29, 72, 0.1);
+        }
+
+        .stat-note.secondary {
+            color: var(--secondary);
+            background: rgba(200, 198, 197, 0.1);
+        }
+
+        .progress {
+            width: 100%;
+            height: 8px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: #353535;
+            margin-top: 10px;
+        }
+
+        .progress > span {
+            display: block;
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, var(--primary-strong), var(--primary));
+        }
+
+        .metric-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 16px;
+            border-radius: 16px;
+            border: 1px solid rgba(92, 63, 64, 0.7);
+            background: linear-gradient(180deg, rgba(27, 27, 27, 0.92), rgba(31, 31, 31, 0.95));
+        }
+
+        .metric-label {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .metric-value {
+            margin-top: 6px;
+            font-size: 24px;
+            font-weight: 800;
+            color: #fff;
+        }
+
+        .metric-icons {
+            width: 42px;
+            height: 42px;
+            display: grid;
+            place-items: center;
+            border-radius: 14px;
+            background: rgba(225, 29, 72, 0.12);
+            color: var(--primary-soft);
+            flex: 0 0 auto;
+        }
+
+        .button {
+            appearance: none;
+            border: 1px solid rgba(92, 63, 64, 0.8);
+            border-radius: 14px;
+            padding: 12px 14px;
+            background: rgba(31, 31, 31, 0.95);
+            color: var(--text);
+            font: inherit;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+        }
+
+        .button:hover {
+            transform: translateY(-1px);
+            border-color: rgba(255, 179, 182, 0.6);
+            background: rgba(42, 42, 42, 0.96);
+        }
+
+        .button:active {
+            transform: translateY(0);
+            opacity: 0.9;
+        }
+
+        .button.primary {
+            background: linear-gradient(135deg, var(--primary-strong), #be0037);
+            border-color: rgba(255, 179, 182, 0.15);
+            color: #fff;
+            box-shadow: 0 14px 30px rgba(225, 29, 72, 0.25);
+        }
+
+        .button.ghost {
+            background: transparent;
+        }
+
+        .button.icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .button.mini {
+            padding: 10px 12px;
+            border-radius: 12px;
+            min-width: 42px;
+        }
+
+        .error-line {
+            color: var(--danger);
+        }
+
+        @media (max-width: 1180px) {
+            .hero-grid { grid-template-columns: 1fr; }
+            .video-panel, .video-stream { min-height: 420px; }
+        }
+
+        @media (max-width: 720px) {
+            .layout { width: min(100% - 20px, 1600px); }
+            .topbar { padding: 14px 16px; align-items: flex-start; flex-direction: column; }
+            .stat-grid { grid-template-columns: 1fr; }
+            .stat-card.wide { grid-column: auto; }
+            .video-panel, .video-stream { min-height: 320px; }
+            .overlay.top-right { right: 12px; top: 12px; }
+            .overlay.bottom { left: 12px; right: 12px; bottom: 12px; }
+        }
     </style>
 </head>
 <body>
-
-    <h1>CCTV AI COUNTER</h1>
-    
-    <div class="container">
-        <div class="video-box">
-            <div class="fps-overlay">
-                <div>CAM: <span id="val-cam-fps">0</span> FPS</div>
-                <div style="color: #FFC107;">AI : <span id="val-ai-fps">0</span> FPS</div>
-                <!-- <div style="margin-top: 5px; border-top: 1px solid #555; padding-top: 5px;">
-                    TEMP: <span id="val-cpu-temp" style="font-weight: bold;">0</span> °C
-                </div> -->
+    <div class="app-shell">
+        <header class="topbar">
+            <div class="brand">
+                <div class="brand-mark"><span class="material-symbols-outlined">shield</span></div>
+                <div>
+                    <h1 class="brand-title">LAB E3.1 AI COUNTING</h1>
+                    <p class="brand-subtitle">People Counter Dashboard</p>
+                </div>
             </div>
-            <img src="/video_feed" alt="Mất kết nối Camera!">
-        </div>
-
-        <div class="control-box">
-            <h3>BẢNG ĐIỀU KHIỂN</h3>
-            
-            <div class="stat-card">
-                <div class="stat-info"><span class="stat-label">KHÁCH VÀO</span><span class="stat-value val-in" id="val-in">0</span></div>
-                <div class="btn-group"><button onclick="sendAction('in_minus')">-</button><button onclick="sendAction('in_plus')">+</button></div>
+            <div class="status-pill">
+                <span class="status-dot pulse"></span>
+                <span>Hệ thống: Hoạt động</span>
             </div>
+        </header>
 
-            <div class="stat-card">
-                <div class="stat-info"><span class="stat-label">KHÁCH RA</span><span class="stat-value val-out" id="val-out">0</span></div>
-                <div class="btn-group"><button onclick="sendAction('out_minus')">-</button><button onclick="sendAction('out_plus')">+</button></div>
-            </div>
+        <main class="layout">
+            <section class="hero-grid">
+                <div class="panel video-panel">
+                    <img class="video-stream" src="/video_feed" alt="Mất kết nối camera">
+                    <!-- <div class="overlay top-left">
+                        <p class="overlay-title"><span class="camera-badge"></span><span>Sảnh chính - Cam 01</span></p>
+                    </div> -->
+                    <div class="overlay top-right">
+                        <div class="status-pill" style="padding: 7px 10px; background: rgba(31, 31, 31, 0.65);">FPS Camera: <strong id="val-cam-fps">0</strong></div>
+                        <div class="status-pill" style="padding: 7px 10px; background: rgba(31, 31, 31, 0.65);">FPS AI: <strong id="val-ai-fps">0</strong></div>
+                        <div id="btn-record-state" class="rec-indicator pulse"><span class="dot"></span><span>REC</span></div>
+                    </div>
+                    <!-- <div class="overlay bottom">
+                        <div class="live-meta">
+                            <span class="meta-chip">Luồng trực tiếp</span>
+                            <span class="meta-chip">Trạng thái: <strong id="text-recording">Đang dừng</strong></span>
+                            <span class="meta-chip">CPU: <strong id="val-cpu-temp">0</strong> °C</span>
+                        </div>
+                    </div> -->
+                </div>
 
-            <div class="stat-card">
-                <div class="stat-info"><span class="stat-label">TRONG PHÒNG</span><span class="stat-value val-room" id="val-room">0</span></div>
-                <div class="btn-group"><button onclick="sendAction('room_minus')">-</button><button onclick="sendAction('room_plus')">+</button></div>
-            </div>
+                <div class="panel control-panel">
+                    <div>
+                        <h2 class="section-title">Bảng điều khiển</h2>
+                        <p class="subtle">Theo dõi lượt vào/ra, số người trong khu vực và hiệu năng xử lý theo thời gian thực.</p>
+                    </div>
 
-            <button id="btn-record" class="record-btn rec-off" onclick="sendAction('toggle_record')">.</button>
-        </div>
+                    <div class="stat-grid">
+                        <div class="stat-card">
+                            <div class="stat-head">
+                                <div class="stat-head-left">
+                                    <span>Vào</span>
+                                    <button class="button mini icon" onclick="sendAction('in_minus')" aria-label="Giảm vào"><span class="material-symbols-outlined">remove</span></button>
+                                    <button class="button mini icon" onclick="sendAction('in_plus')" aria-label="Tăng vào"><span class="material-symbols-outlined">add</span></button>
+                                </div>
+                                <span class="material-symbols-outlined" style="color: var(--primary-soft);">login</span>
+                            </div>
+                            <div class="stat-value-row">
+                                <div class="stat-value" id="val-in">0</div>
+                                <!-- <span class="stat-note good"><span class="material-symbols-outlined" style="font-size: 16px;">trending_up</span> +12%</span> -->
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-head">
+                                <div class="stat-head-left">
+                                    <span>Ra</span>
+                                    <button class="button mini icon" onclick="sendAction('out_minus')" aria-label="Giảm ra"><span class="material-symbols-outlined">remove</span></button>
+                                    <button class="button mini icon" onclick="sendAction('out_plus')" aria-label="Tăng ra"><span class="material-symbols-outlined">add</span></button>
+                                </div>
+                                <span class="material-symbols-outlined" style="color: var(--secondary);">logout</span>
+                            </div>
+                            <div class="stat-value-row">
+                                <div class="stat-value" id="val-out">0</div>
+                                <!-- <span class="stat-note secondary"><span class="material-symbols-outlined" style="font-size: 16px;">trending_down</span> -5%</span> -->
+                            </div>
+                        </div>
+                        <div class="stat-card wide">
+                            <div class="stat-head"><span>Trong khu vực</span><span class="material-symbols-outlined" style="color: var(--tertiary);">groups</span></div>
+                            <div class="stat-value-row">
+                                <div>
+                                    <div class="stat-value" id="val-room">0</div>
+                                    <div class="subtle" style="margin-top: 4px;">Sức chứa: <strong id="val-occupancy">0%</strong></div>
+                                </div>
+                                <div style="min-width: 120px; flex: 1; max-width: 180px;">
+                                    <div class="progress"><span id="room-progress" style="width: 0%;"></span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="metric-row">
+                        <div>
+                            <p class="metric-label">Nhiệt độ CPU: </p>
+                        </div>
+                        <span class="material-symbols-outlined" id="val-cpu-temp">0</span>°C
+                    </div>
+
+                    <button class="button primary icon" onclick="sendAction('toggle_record')"><span class="material-symbols-outlined">radio_button_checked</span>Bật / tắt ghi hình</button>
+                </div>
+            </section>
+        </main>
     </div>
 
     <script>
@@ -74,30 +558,42 @@
             fetch('/api/data')
                 .then(response => response.json())
                 .then(data => {
+                    const occupancy = Math.min(100, Math.round((Number(data.room) / 60) * 100));
+
                     document.getElementById('val-in').innerText = data.in;
                     document.getElementById('val-out').innerText = data.out;
                     document.getElementById('val-room').innerText = data.room;
-                    
-                    // Cập nhật thông số hiệu năng
-                    document.getElementById('val-cam-fps').innerText = data.cam_fps;
-                    document.getElementById('val-ai-fps').innerText = data.ai_fps;
-                    
-                    const btnRec = document.getElementById('btn-record');
-                    if(data.recording) {
-                        btnRec.innerText = "..";
-                        btnRec.className = "record-btn rec-on";
+                    document.getElementById('val-cam-fps').innerText = Number(data.cam_fps).toFixed(1);
+                    document.getElementById('val-ai-fps').innerText = Number(data.ai_fps).toFixed(1);
+                    document.getElementById('val-cpu-temp').innerText = Number(data.cpu_temp).toFixed(1);
+                    document.getElementById('val-occupancy').innerText = occupancy + '%';
+                    document.getElementById('room-progress').style.width = occupancy + '%';
+
+                    const btnRec = document.getElementById('btn-record-state');
+                    const textRec = document.getElementById('text-recording');
+                    if (data.recording) {
+                        btnRec.innerHTML = '<span class="dot"></span><span>REC</span>';
+                        btnRec.style.background = 'rgba(225, 29, 72, 0.9)';
+                        textRec.innerText = 'Đang ghi hình';
+                        textRec.style.color = 'var(--primary-soft)';
                     } else {
-                        btnRec.innerText = "...";
-                        btnRec.className = "record-btn rec-off";
+                        btnRec.innerHTML = '<span class="dot"></span><span>STOP</span>';
+                        btnRec.style.background = 'rgba(74, 73, 73, 0.9)';
+                        textRec.innerText = 'Đã tạm dừng';
+                        textRec.style.color = 'var(--secondary)';
                     }
-                }).catch(err => console.log("Đang chờ Pi..."));
+                })
+                .catch(() => {
+                    document.getElementById('text-recording').innerText = 'Đang chờ Pi...';
+                    document.getElementById('text-recording').style.color = 'var(--danger)';
+                });
         }
 
         function sendAction(actionType) {
             fetch('/api/action', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({action: actionType})
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: actionType })
             }).then(() => updateDashboard());
         }
 

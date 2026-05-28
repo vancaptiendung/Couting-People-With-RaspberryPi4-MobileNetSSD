@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureView Pro - Nhật ký sự kiện</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #131313;
+            --surface: #1f1f1f;
+            --surface-high: #2a2a2a;
+            --surface-low: #1b1b1b;
+            --surface-lowest: #0e0e0e;
+            --border: #5c3f40;
+            --text: #e2e2e2;
+            --text-muted: #e5bdbe;
+            --primary: #ffb3b6;
+            --primary-strong: #e11d48;
+            --primary-soft: #ffdada;
+            --secondary: #c8c6c5;
+            --tertiary: #747373;
+            --success: #6ee7b7;
+            --warning: #f59e0b;
+            --danger: #ffb4ab;
+        }
+
+        * { box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(225, 29, 72, 0.14), transparent 22%),
+                radial-gradient(circle at top right, rgba(255, 179, 182, 0.08), transparent 18%),
+                linear-gradient(180deg, #171717 0%, var(--bg) 36%, #0f0f0f 100%);
+        }
+
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+
+        .shell {
+            min-height: 100vh;
+            padding: 18px;
+        }
+
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px 20px;
+            border: 1px solid rgba(92, 63, 64, 0.7);
+            border-radius: 20px;
+            background: rgba(14, 14, 14, 0.82);
+            backdrop-filter: blur(12px);
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.24);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-mark {
+            width: 42px;
+            height: 42px;
+            display: grid;
+            place-items: center;
+            border-radius: 14px;
+            color: #40000c;
+            background: linear-gradient(135deg, var(--primary-soft), var(--primary));
+            box-shadow: 0 0 0 1px rgba(255, 179, 182, 0.14), 0 18px 40px rgba(225, 29, 72, 0.24);
+        }
+
+        .brand-title {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--primary-soft);
+        }
+
+        .brand-subtitle {
+            margin: 2px 0 0;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .top-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(92, 63, 64, 0.72);
+            background: rgba(31, 31, 31, 0.82);
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .container {
+            width: min(1180px, 100%);
+            margin: 18px auto 0;
+        }
+
+        .hero {
+            display: grid;
+            grid-template-columns: 1.3fr 0.7fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .panel {
+            border: 1px solid rgba(92, 63, 64, 0.72);
+            border-radius: 20px;
+            background: linear-gradient(180deg, rgba(31, 31, 31, 0.96), rgba(23, 23, 23, 0.98));
+            box-shadow: 0 20px 45px rgba(0, 0, 0, 0.22);
+        }
+
+        .hero-copy {
+            padding: 20px;
+        }
+
+        .eyebrow {
+            margin: 0 0 10px;
+            color: var(--primary-soft);
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(26px, 4vw, 40px);
+            line-height: 1.1;
+            letter-spacing: -0.03em;
+        }
+
+        .hero-text {
+            margin: 12px 0 0;
+            color: var(--text-muted);
+            line-height: 1.6;
+            max-width: 68ch;
+        }
+
+        .hero-stats {
+            display: grid;
+            gap: 12px;
+            padding: 20px;
+        }
+
+        .stat {
+            padding: 14px 16px;
+            border-radius: 16px;
+            background: linear-gradient(180deg, rgba(27, 27, 27, 0.95), rgba(31, 31, 31, 0.98));
+            border: 1px solid rgba(92, 63, 64, 0.6);
+        }
+
+        .stat-label {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .stat-value {
+            margin-top: 6px;
+            font-size: 24px;
+            font-weight: 800;
+            color: #fff;
+        }
+
+        .log-list {
+            display: grid;
+            gap: 12px;
+        }
+
+        .log-item {
+            padding: 16px 16px 15px;
+            border-radius: 18px;
+            border: 1px solid rgba(92, 63, 64, 0.68);
+            background: linear-gradient(180deg, rgba(31, 31, 31, 0.96), rgba(23, 23, 23, 0.98));
+            box-shadow: 0 14px 35px rgba(0, 0, 0, 0.18);
+        }
+
+        .tone-success { border-left: 4px solid var(--success); }
+        .tone-danger { border-left: 4px solid var(--danger); }
+        .tone-warning { border-left: 4px solid var(--warning); }
+        .tone-info { border-left: 4px solid var(--primary-strong); }
+        .tone-manual { border-left: 4px solid var(--secondary); }
+        .tone-neutral { border-left: 4px solid var(--tertiary); }
+
+        .log-top {
+            display: flex;
+            align-items: start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .log-title-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .log-title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 800;
+            color: #fff;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .log-time {
+            color: var(--text-muted);
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .log-message {
+            margin: 0;
+            color: var(--text);
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            margin-top: 16px;
+            padding: 14px 16px;
+            border: 1px solid rgba(92, 63, 64, 0.72);
+            border-radius: 18px;
+            background: rgba(14, 14, 14, 0.82);
+        }
+
+        .footer strong { color: var(--primary-soft); }
+
+        .list-wrap {
+            margin-top: 16px;
+            padding: 18px;
+        }
+
+        .list-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+
+        .list-header h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 800;
+        }
+
+        .hint {
+            margin: 4px 0 0;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .loading-box,
+        .empty-box {
+            padding: 22px;
+            border-radius: 18px;
+            border: 1px dashed rgba(92, 63, 64, 0.8);
+            color: var(--text-muted);
+            text-align: center;
+            background: rgba(31, 31, 31, 0.55);
+        }
+
+        .loading-box {
+            display: none;
+        }
+
+        .loading-box.visible {
+            display: block;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border-radius: 999px;
+            margin: 0 auto 10px;
+            border: 2px solid rgba(255, 255, 255, 0.18);
+            border-top-color: var(--primary-soft);
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .sentinel {
+            height: 1px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        @media (max-width: 980px) {
+            .hero {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 720px) {
+            .shell { padding: 12px; }
+            .topbar { padding: 14px; flex-direction: column; align-items: flex-start; }
+            .container { margin-top: 14px; }
+            .list-wrap, .hero-copy, .hero-stats { padding: 16px; }
+            .footer { flex-direction: column; align-items: flex-start; }
+            .log-top { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <header class="topbar">
+            <div class="brand">
+                <div class="brand-mark"><span class="material-symbols-outlined">receipt_long</span></div>
+                <div>
+                    <h2 class="brand-title">SecureView Pro</h2>
+                    <p class="brand-subtitle">Trang xem log từ cctv_logs.db</p>
+                </div>
+            </div>
+            <div class="top-actions">
+                <a class="pill" href="/">Quay lại dashboard</a>
+                <span class="pill"><span class="material-symbols-outlined" style="font-size: 16px;">database</span> SQLite</span>
+            </div>
+        </header>
+
+        <main class="container">
+            <section class="hero">
+                <div class="panel hero-copy">
+                    <p class="eyebrow">Nhật ký sự kiện</p>
+                    <h1>Danh sách log ngắn gọn, tải theo lô để không tốn tài nguyên.</h1>
+                    <p class="hero-text">
+                        Trang này chỉ tải 30 sự kiện gần nhất mỗi lần. Khi cuộn xuống cuối danh sách, hệ thống sẽ lấy tiếp các log cũ hơn từ SQLite bằng cursor thay vì tải toàn bộ bảng.
+                    </p>
+                </div>
+                <div class="panel hero-stats">
+                    <div class="stat">
+                        <p class="stat-label">Số log đang hiển thị</p>
+                        <div class="stat-value" id="shownCount">{{ initial_logs|length }}</div>
+                    </div>
+                    <div class="stat">
+                        <p class="stat-label">Kích thước mỗi lô</p>
+                        <div class="stat-value">30</div>
+                    </div>
+                    <div class="stat">
+                        <p class="stat-label">Trạng thái tải tiếp</p>
+                        <div class="stat-value" id="moreState">{{ 'Có thể tải thêm' if has_more else 'Hết dữ liệu' }}</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="panel list-wrap">
+                <div class="list-header">
+                    <div>
+                        <h2>30 sự kiện gần nhất</h2>
+                        <p class="hint">Các mục như “Có người vào” và “Thay đổi thủ công” được rút gọn thành thông tin cần thiết nhất.</p>
+                    </div>
+                    <span class="pill"><span class="material-symbols-outlined" style="font-size: 16px;">scroll</span> Cuộn xuống để tải thêm</span>
+                </div>
+
+                {% if initial_logs %}
+                <div id="logList" class="log-list">
+                    {% for log in initial_logs %}
+                    <article class="log-item tone-{{ log.tone }}" data-id="{{ log.id }}">
+                        <div class="log-top">
+                            <div>
+                                <div class="log-title-row">
+                                    <h3 class="log-title">{{ log.title }}</h3>
+                                    <span class="badge">#{{ log.id }}</span>
+                                </div>
+                                <p class="log-message">{{ log.message }}</p>
+                            </div>
+                            <span class="log-time">{{ log.timestamp }}</span>
+                        </div>
+                    </article>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div id="emptyState" class="empty-box">Chưa có log nào trong cctv_logs.db.</div>
+                <div id="logList" class="log-list"></div>
+                {% endif %}
+
+                <div id="loadingState" class="loading-box">
+                    <div class="spinner"></div>
+                    Đang tải thêm sự kiện...
+                </div>
+                <div id="sentinel" class="sentinel"></div>
+            </section>
+
+            <div class="footer">
+                <div>
+                    <strong>Cơ chế tải</strong>
+                    <div class="hint">Mỗi lần chỉ lấy 30 bản ghi cũ hơn, không quét toàn bộ bảng.</div>
+                </div>
+                <div>
+                    <strong>Nguồn dữ liệu</strong>
+                    <div class="hint">SQLite file: cctv_logs.db</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const state = {
+            cursor: {{ next_before_id | tojson }},
+            hasMore: {{ 'true' if has_more else 'false' }},
+            loading: false,
+        };
+
+        const logList = document.getElementById('logList');
+        const sentinel = document.getElementById('sentinel');
+        const loadingState = document.getElementById('loadingState');
+        const emptyState = document.getElementById('emptyState');
+        const shownCount = document.getElementById('shownCount');
+        const moreState = document.getElementById('moreState');
+
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderLogItem(item) {
+            return `
+                <article class="log-item tone-${escapeHtml(item.tone)}" data-id="${escapeHtml(item.id)}">
+                    <div class="log-top">
+                        <div>
+                            <div class="log-title-row">
+                                <h3 class="log-title">${escapeHtml(item.title)}</h3>
+                                <span class="badge">#${escapeHtml(item.id)}</span>
+                            </div>
+                            <p class="log-message">${escapeHtml(item.message)}</p>
+                        </div>
+                        <span class="log-time">${escapeHtml(item.timestamp)}</span>
+                    </div>
+                </article>
+            `;
+        }
+
+        function setLoading(visible) {
+            loadingState.classList.toggle('visible', visible);
+        }
+
+        function updateFooterState() {
+            moreState.textContent = state.hasMore ? 'Có thể tải thêm' : 'Hết dữ liệu';
+        }
+
+        async function loadMoreLogs() {
+            if (!state.hasMore || state.loading || state.cursor === null || state.cursor === undefined) {
+                return;
+            }
+
+            state.loading = true;
+            setLoading(true);
+
+            try {
+                const response = await fetch(`/api/logs?before_id=${state.cursor}&limit=30`);
+                const data = await response.json();
+
+                if (Array.isArray(data.items) && data.items.length) {
+                    if (emptyState) {
+                        emptyState.classList.add('hidden');
+                    }
+                    logList.insertAdjacentHTML('beforeend', data.items.map(renderLogItem).join(''));
+                    shownCount.textContent = String(logList.children.length);
+                    state.cursor = data.next_before_id;
+                }
+
+                state.hasMore = Boolean(data.has_more);
+                updateFooterState();
+
+                if (!state.hasMore || state.cursor === null) {
+                    observer.disconnect();
+                    sentinel.classList.add('hidden');
+                }
+            } catch (error) {
+                console.error('Failed to load logs', error);
+            } finally {
+                state.loading = false;
+                setLoading(false);
+            }
+        }
+
+        const observer = new IntersectionObserver((entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+                loadMoreLogs();
+            }
+        }, {
+            root: null,
+            rootMargin: '320px 0px',
+            threshold: 0.01,
+        });
+
+        if (state.hasMore) {
+            observer.observe(sentinel);
+        } else {
+            sentinel.classList.add('hidden');
+        }
+
+        updateFooterState();
+    </script>
+</body>
+</html>

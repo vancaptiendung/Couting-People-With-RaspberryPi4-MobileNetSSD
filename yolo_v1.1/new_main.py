@@ -9,6 +9,8 @@ import time
 import json
 import glob
 import queue
+import re
+import shutil
 import sqlite3
 import requests
 from collections import deque
@@ -21,36 +23,6 @@ from picamera2 import Picamera2
 # =====================================================================
 DATA_FILE = "counter_data.json"
 DB_FILE = "cctv_logs.db"
-
-def init_db():
-    """Khởi tạo cơ sở dữ liệu SQLite siêu nhẹ lưu log nội bộ"""
-    with sqlite3.connect(DB_FILE) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS system_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                object_id INTEGER,
-                details TEXT,
-                synced INTEGER DEFAULT 0
-            )
-        ''')
-        conn.commit()
-
-def log_event(event_type, object_id=None, details=""):
-    """Ghi âm thầm lịch sử vào SQLite mà không làm lag AI"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO system_logs (timestamp, event_type, object_id, details) VALUES (?, ?, ?, ?)",
-                (timestamp, event_type, object_id, details)
-            )
-            conn.commit()
-    except Exception as e:
-        print(f"[DB ERROR] Lỗi ghi DB: {e}")
 
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -66,6 +38,40 @@ def save_data():
         json.dump({"in": TOTAL_IN, "out": TOTAL_OUT, "room": PEOPLE_IN_ROOM}, f)
 
 TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM = load_data()
+
+# database 
+def init_db():
+    """Khởi tạo cơ sở dữ liệu SQLite siêu nhẹ lưu log nội bộ"""
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS system_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                object_id INTEGER,
+                went_in INTERGER,
+                went_out INTEGER,
+                inRoom INTEGER,
+                details TEXT DEFAULT "Null",
+                synced INTEGER DEFAULT 0
+            )
+        ''')
+        conn.commit()
+
+def log_event(event_type, object_id=None, details=""):
+    """Ghi âm thầm lịch sử vào SQLite mà không làm lag AI"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO system_logs (timestamp, event_type, object_id, went_in, went_out, inRoom, details) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (timestamp, event_type, object_id, TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM, details)
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[DB ERROR] Lỗi ghi DB: {e}")
 
 latest_frame = None
 output_frame_bgr = None
@@ -204,9 +210,91 @@ def get_cpu_temp():
             return round(float(f.read()) / 1000.0, 1)
     except: return 0.0
 
+def parse_current_people(details):
+    if not details:
+        return None
+    match = re.search(r"Phòng:\s*(\d+)", details)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"Số người hiện tại:\s*(\d+)", details)
+    if match:
+        return int(match.group(1))
+    return None
+
+def format_log_entry(row):
+    log_id, timestamp, event_type, object_id, details, synced = row
+    event_key = (event_type or "").upper()
+    current_people = parse_current_people(details)
+
+    if event_key in ("IN", "MANUAL_IN"):
+        title = "Thay đổi thủ công" if event_key == "MANUAL_IN" else "Có người vào"
+        message = f"Số người hiện tại: {current_people}" if current_people is not None else "Có người vào"
+        tone = "manual" if event_key == "MANUAL_IN" else "success"
+    elif event_key in ("OUT", "MANUAL_OUT"):
+        title = "Thay đổi thủ công" if event_key == "MANUAL_OUT" else "Có người ra"
+        message = f"Số người hiện tại: {current_people}" if current_people is not None else "Có người ra"
+        tone = "manual" if event_key == "MANUAL_OUT" else "danger"
+    elif event_key == "SYS_RECORDING":
+        title = "Ghi hình"
+        message = details or "Trạng thái ghi hình đã thay đổi"
+        tone = "info"
+    elif event_key == "SYSTEM_START":
+        title = "Hệ thống khởi động"
+        message = details or "Hệ thống đã sẵn sàng"
+        tone = "info"
+    elif event_key == "SYSTEM_STOP":
+        title = "Hệ thống dừng"
+        message = details or "Người dùng đã tắt hệ thống"
+        tone = "warning"
+    else:
+        title = event_type or "Sự kiện"
+        message = details or "Không có chi tiết"
+        tone = "neutral"
+
+    return {
+        "id": log_id,
+        "timestamp": timestamp,
+        "title": title,
+        "message": message,
+        "tone": tone,
+        "event_type": event_type,
+        "synced": synced,
+    }
+
+def fetch_log_rows(before_id=None, limit=30):
+    limit = max(1, min(int(limit or 30), 100))
+    query = "SELECT id, timestamp, event_type, object_id, details, synced FROM system_logs"
+    params = []
+    if before_id is not None:
+        query += " WHERE id < ?"
+        params.append(int(before_id))
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit + 1)
+
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    items = [format_log_entry(row) for row in rows]
+    next_before_id = rows[-1][0] if rows else None
+    return items, has_more, next_before_id
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
+@app.route("/logs")
+def logs_page():
+    initial_logs, has_more, next_before_id = fetch_log_rows(limit=30)
+    return render_template(
+        "logs.html",
+        initial_logs=initial_logs,
+        has_more=has_more,
+        next_before_id=next_before_id,
+    )
 
 def generate_stream():
     global output_frame_bgr
@@ -234,19 +322,47 @@ def api_data():
         "in": TOTAL_IN, "out": TOTAL_OUT, "room": PEOPLE_IN_ROOM, 
         "recording": recording_enabled,
         "cam_fps": round(cam_fps, 1), "ai_fps": round(ai_fps, 1),
-        "cpu_temp": get_cpu_temp()
+        "cpu_temp": get_cpu_temp(),
+        "storage_free_gb": round(shutil.disk_usage("/").free / (1024 ** 3), 1)
+    })
+
+@app.route("/api/logs")
+def api_logs():
+    before_id = request.args.get("before_id", type=int)
+    limit = request.args.get("limit", default=30, type=int)
+    items, has_more, next_before_id = fetch_log_rows(before_id=before_id, limit=limit)
+    return jsonify({
+        "items": items,
+        "has_more": has_more,
+        "next_before_id": next_before_id,
     })
 
 @app.route("/api/action", methods=["POST"])
 def api_action():
     global TOTAL_IN, TOTAL_OUT, PEOPLE_IN_ROOM, recording_enabled
     action = request.json.get("action")
-    if action == "in_plus": TOTAL_IN += 1
-    elif action == "in_minus": TOTAL_IN = max(0, TOTAL_IN - 1)
-    elif action == "out_plus": TOTAL_OUT += 1
-    elif action == "out_minus": TOTAL_OUT = max(0, TOTAL_OUT - 1)
-    elif action == "room_plus": PEOPLE_IN_ROOM += 1
-    elif action == "room_minus": PEOPLE_IN_ROOM = max(0, PEOPLE_IN_ROOM - 1)
+    if action == "in_plus": 
+        TOTAL_IN += 1
+        PEOPLE_IN_ROOM += 1
+        log_event("MANUAL_IN", "User manually added a person", details=f"Tổng IN: {TOTAL_IN} | Phòng: {PEOPLE_IN_ROOM}")
+    
+    elif action == "in_minus" and TOTAL_IN > TOTAL_OUT: 
+        TOTAL_IN = TOTAL_IN - 1
+        PEOPLE_IN_ROOM = PEOPLE_IN_ROOM - 1
+        log_event("MANUAL_IN", "User manually removed a person", details=f"Tổng IN: {TOTAL_IN} | Phòng: {PEOPLE_IN_ROOM}")
+    
+    elif action == "out_plus" and TOTAL_OUT < TOTAL_IN: 
+        TOTAL_OUT += 1
+        PEOPLE_IN_ROOM = PEOPLE_IN_ROOM - 1
+        log_event("MANUAL_OUT", "User manually added a person", details=f"Tổng OUT: {TOTAL_OUT} | Phòng: {PEOPLE_IN_ROOM}")
+    
+    elif action == "out_minus" and TOTAL_OUT > 0: 
+        TOTAL_OUT = max(0, TOTAL_OUT - 1)
+        PEOPLE_IN_ROOM += 1
+        log_event("MANUAL_OUT", "User manually removed a person", details=f"Tổng OUT: {TOTAL_OUT} | Phòng: {PEOPLE_IN_ROOM}")
+
+    # elif action == "room_plus": PEOPLE_IN_ROOM += 1
+    # elif action == "room_minus": PEOPLE_IN_ROOM = max(0, PEOPLE_IN_ROOM - 1)
     elif action == "toggle_record": 
         recording_enabled = not recording_enabled
         log_event("SYS_RECORDING", details=f"Ghi hình: {'Bật' if recording_enabled else 'Tắt'}")
